@@ -23,6 +23,14 @@ dependencies = [
     "streamlit==1.57.0",
     "httpx>=0.27",
     "anthropic==0.102.0",
+    # ---- vendored paper-search-mcp 的运行时依赖（仅 4 源 search() 路径真正需要的 3 个）----
+    # 决策见 vendor/paper-search-mcp/VENDOR.md「依赖裁剪决策」：
+    # 我们不 pip install vendored 包（避免拖入 fastmcp / mcp[cli] / pypdf / httpx[socks] / lxml 约 50MB），
+    # 而是用 [tool.hatch.build] 把 paper_search_mcp 作为第二个包暴露，只装下面 3 个真依赖。
+    # 注：requests 来自 vendored 代码（被动），项目主用的 HTTP 客户端是 httpx —— 我方代码不主动调 requests。
+    "requests>=2.32",
+    "feedparser>=6.0",
+    "beautifulsoup4>=4.12",
 ]
 
 [project.optional-dependencies]
@@ -37,7 +45,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/lit_agent"]
+# 第二个包：把 vendored 的 paper_search_mcp 暴露为顶层可 import 包，
+# 但不经它自己的 pyproject（从而跳过 fastmcp/mcp/pypdf 等无用依赖）。见 VENDOR.md。
+packages = ["src/lit_agent", "vendor/paper-search-mcp/paper_search_mcp"]
 
 [tool.uv]
 package = true
@@ -64,7 +74,13 @@ explicit_package_bases = true
 namespace_packages = true
 # 第三方无类型存根的库豁免（按需收紧）
 [[tool.mypy.overrides]]
-module = ["streamlit.*", "langgraph.*", "langgraph_checkpoint_postgres.*"]
+module = [
+    "streamlit.*",
+    "langgraph.*",
+    "langgraph_checkpoint_postgres.*",
+    "paper_search_mcp.*",  # vendored，无类型存根
+    "feedparser.*",
+]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
