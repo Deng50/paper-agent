@@ -1,0 +1,20 @@
+# 构建上下文排除：减小体积、避免把宿主机派生物带进镜像。
+.venv/
+__pycache__/
+*.py[cod]
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.pytest_tmp/
+.git/
+.gitignore
+
+# 运行时数据与备份不进镜像（memory 由 compose 卷挂载）
+memory/
+backups/
+
+# 本地密钥不进镜像（compose 用 env_file 注入）
+.env
+
+# 文档与备份目录无需进镜像
+docs备份/

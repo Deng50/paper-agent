@@ -1,0 +1,55 @@
+# 3 容器：postgres / api / frontend + ./memory 卷（02_architecture §1.3）。
+# 无 Redis / 向量库 / 反代。
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: lit
+      POSTGRES_PASSWORD: lit
+      POSTGRES_DB: lit_agent
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lit -d lit_agent"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    ports:
+      - "5432:5432"
+
+  api:
+    build: .
+    env_file: .env
+    environment:
+      # 容器内连 postgres 服务名
+      DATABASE_URL: postgresql+psycopg://lit:lit@postgres:5432/lit_agent
+      MEMORY_DIR: /app/memory
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./memory:/app/memory
+    ports:
+      - "8000:8000"
+    # 起容器时：建记忆目录 → 迁移 → 起 API
+    command: >
+      sh -c "python scripts/init_memory.py &&
+             alembic upgrade head &&
+             uvicorn lit_agent.api.main:app --host 0.0.0.0 --port 8000"
+
+  frontend:
+    build: .
+    env_file: .env
+    environment:
+      API_BASE_URL: http://api:8000
+    depends_on:
+      - api
+    ports:
+      - "8501:8501"
+    command: >
+      streamlit run src/lit_agent/frontend/app.py
+      --server.port 8501 --server.address 0.0.0.0
+
+volumes:
+  pgdata:

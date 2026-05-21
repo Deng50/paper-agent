@@ -1,0 +1,34 @@
+# --- secrets (PRD R7: 绝不入库) ---
+.env
+.env.*
+!.env.example
+
+# --- runtime memory（source of truth 但不入库，靠 ./backups 备份）---
+/memory/
+!/memory/.gitkeep
+
+# --- python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.uv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.pytest_tmp/
+dist/
+build/
+
+# --- vendored MCP（M2 fork 锁版本到 vendor/，按需调整）---
+# vendor/ 是否入库待 M2 决定
+
+# --- backups ---
+/backups/
+
+# --- IDE / OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
