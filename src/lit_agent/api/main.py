@@ -12,7 +12,7 @@ import structlog
 from fastapi import FastAPI
 
 from lit_agent.api.middleware import TraceIDMiddleware, register_exception_handlers
-from lit_agent.api.routes import system
+from lit_agent.api.routes import admin, feedback, sessions, system
 from lit_agent.core.config import get_settings
 from lit_agent.core.deps import setup_checkpointer
 from lit_agent.core.logging import configure_logging
@@ -67,6 +67,9 @@ def create_app() -> FastAPI:
     app.add_middleware(TraceIDMiddleware)
     register_exception_handlers(app)
     app.include_router(system.router)
+    app.include_router(admin.router)
+    app.include_router(sessions.router)
+    app.include_router(feedback.router)
     return app
 
 
