@@ -57,6 +57,8 @@ class Settings(BaseSettings):
     user_email: str = "me@example.com"
     timezone: str = "Asia/Shanghai"
     daily_push_hour: int = Field(default=10, ge=0, le=23)
+    # 失败补跑（§6.5）：10:00 失败→11:00 第二个 cron 打同 thread_id；不是 misfire_grace。
+    daily_push_retry_hour: int = Field(default=11, ge=0, le=23)
 
     # ---- paper-search-mcp（M2 接入；M1 留空则 /status 该项 skipped）----
     paper_search_mcp_cmd: str = ""

@@ -29,7 +29,25 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         await setup_checkpointer()
     except Exception as exc:
         _log.warning("checkpointer_setup_failed", error=str(exc))
+
+    # M3：同进程 AsyncIOScheduler（10:00/11:00 双 cron）。失败不阻塞启动。
+    app.state.scheduler = None
+    try:
+        from lit_agent.scheduler.jobs import create_scheduler
+
+        scheduler = create_scheduler(settings)
+        scheduler.start()
+        app.state.scheduler = scheduler
+        _log.info(
+            "scheduler_started", hour=settings.daily_push_hour, retry=settings.daily_push_retry_hour
+        )
+    except Exception as exc:
+        _log.warning("scheduler_start_failed", error=str(exc))
+
     yield
+
+    if app.state.scheduler is not None:
+        app.state.scheduler.shutdown(wait=False)
     _log.info("shutdown")
 
 

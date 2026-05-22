@@ -84,6 +84,7 @@ module = [
     "langgraph_checkpoint_postgres.*",
     "paper_search_mcp.*",  # vendored，无类型存根
     "feedparser.*",
+    "apscheduler.*",  # 无 py.typed
 ]
 ignore_missing_imports = true
 

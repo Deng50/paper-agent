@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 
 import structlog
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from pydantic import BaseModel
 from sqlalchemy import text
 
@@ -114,10 +114,20 @@ def _ms(t0: float) -> int:
     return int((time.perf_counter() - t0) * 1000)
 
 
+def _scheduler_info(request: Request) -> SchedulerInfo:
+    """从 app.state.scheduler（M3 起用）读运行态与下次推送时间。"""
+    scheduler = getattr(request.app.state, "scheduler", None)
+    if scheduler is None or not scheduler.running:
+        return SchedulerInfo(running=False, next_daily_push_at=None)
+    job = scheduler.get_job("daily_push")
+    nxt = getattr(job, "next_run_time", None) if job else None
+    return SchedulerInfo(running=True, next_daily_push_at=nxt.isoformat() if nxt else None)
+
+
 @router.get(
     "/api/v1/status", response_model=StatusResponse, tags=["system"], dependencies=[AuthDep]
 )
-async def status() -> StatusResponse:
+async def status(request: Request) -> StatusResponse:
     settings = get_settings()
     checks: dict[str, Check] = {
         "postgres": await _check_postgres(),
@@ -141,5 +151,5 @@ async def status() -> StatusResponse:
         status=overall,
         version=__version__,
         checks=checks,
-        scheduler=SchedulerInfo(running=False, next_daily_push_at=None),  # 调度器在 M3 启用
+        scheduler=_scheduler_info(request),
     )
