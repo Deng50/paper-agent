@@ -107,7 +107,7 @@ flowchart LR
 
 | # | 任务 | 预估 |
 |---|------|------|
-| 1 | `agents/lit_agent.py` `create_deep_agent()` + `LIT_AGENT_SYSTEM_PROMPT` | 2.5h |
+| 1 | `agents/lit_agent.py` langgraph 原生 `create_react_agent` + `ChatAnthropic` + `LIT_AGENT_SYSTEM_PROMPT`（skill 全文启动期拼入 system；不用 deepagents，见 handover §6.1） | 2.5h |
 | 2 | `skills/daily_search.skill.md`（完整）：检索词策略 + 调 `search_papers` + 写邮件文案 + 落 push 审计 | 1.5h |
 | 3 | `tools/mail.py` `send_email`（Jinja2 + aiosmtplib）+ 邮件模板 | 2.5h |
 | 4 | `scheduler/jobs.py` cron(10:00) 注入 system message（固定 thread_id，无 locks 表） | 1.5h |
@@ -126,7 +126,7 @@ flowchart LR
 - [ ] **去重**：连续两天搜到同 DOI，第二天 `search_papers` 不再返回 / 不重复落盘
 - [ ] SMTP 密码错 → `pushes.status=partial`，站内推送仍正常
 - [ ] 11:00 重试若 10:00 仍在跑 → LangGraph thread busy 自动拒绝（无需 locks 表）
-- [ ] prompt caching 生效（`search_papers` 评分第 2+ 次 `cache_read_tokens > 0`）
+- [ ] **token 预算护栏**：daily-push 每次结束打印 dry-run token 计数日志（in/out），月度估算 ≤ $5。（⚠️ newapi 网关不透传 `cache_control`、prompt caching 不可用——handover §6.11 实证；按官方价 Haiku 4.5 $1/$5 per MTok 作成本下限估）
 
 ---
 
@@ -229,7 +229,7 @@ flowchart LR
 | LLM 月成本超预算 | M3/M4 | dry-run 盯 token，含 cache_read |
 | 极窄领域无产出 | 全部 | README 声明不适用（PRD §8） |
 | `.env` 误提交 | 全部 | `.gitignore` + pre-commit secret scan |
-| DeepAgents / LangGraph API 变更 | 全部 | 基于 LangGraph，必要时降级手写 StateGraph |
+| LangGraph API 变更 | 全部 | 基于 LangGraph 原生 `create_react_agent`（不用 deepagents）；必要时降级手写 StateGraph |
 
 ---
 

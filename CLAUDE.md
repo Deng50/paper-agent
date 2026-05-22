@@ -84,8 +84,7 @@
 
 | 包 | 何时锁 | 备注 |
 |----|--------|------|
-| **deepagents** | **M3** | ⚠️ 0.6.x 是 2026-05 的大重写，M1/M2 用不到；M3 时用 uv 统一解析，**deepagents 为约束源**，langgraph 跟着回调 pin |
-| langchain-anthropic | M3 | `create_deep_agent(model=ChatAnthropic(...))` |
+| langchain-anthropic | M3 | `create_react_agent(model=ChatAnthropic(...))`（langgraph 原生，**不用 deepagents**，理由见 handover §6.1） |
 | APScheduler | M3 | 用 `3.11.2`，**不用 4.0**（仍 alpha，生产禁用） |
 | sse-starlette | M4 | `/chat` SSE |
 | aiosmtplib + Jinja2 | M3 | `tools/mail.py` |

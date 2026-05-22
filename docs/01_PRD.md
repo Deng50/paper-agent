@@ -68,7 +68,7 @@
 
 | ID | 模块 | 优先级 | 职责 | 实现 |
 |----|------|--------|------|------|
-| M1 | `lit_agent` 单 agent | P0 | 承载推送与对话 | `create_deep_agent()` 单实例 |
+| M1 | `lit_agent` 单 agent | P0 | 承载推送与对话 | langgraph 原生 `create_react_agent` 单实例（不用 deepagents，见 handover §6.1） |
 | M2 | `search_papers` 工具 | P0 | **搜 + 去重 + 评分 + 持久化**一体（见 §附录 A.1） | 本地 @tool 包 `paper-search-mcp` + 代码循环 + Haiku 批量评分 |
 | M3 | 文件记忆工具 | P0 | 读 / grep / 原子写 `./memory/` | `search_memory` / `read_file` / `write_file`（grep + frontmatter，MVP 无 SQLite） |
 | M4 | 外挂触发器 | P0 | 10:00 给 agent 发系统消息 | APScheduler + 固定 `thread_id=daily_push:YYYY-MM-DD` |

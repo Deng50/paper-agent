@@ -120,7 +120,7 @@ flowchart LR
 
 ### 3.1 创建与 SKILL
 
-一个 `create_deep_agent(model=Haiku 4.5, tools=[search_papers, search_memory, read_file, write_file, send_email], system_prompt=...)`（代码见附录 A.2）。system prompt 只讲身份 + 工具 + "遇任务先读对应 skill"，不写死流程。
+一个 langgraph 原生 `create_react_agent(model=ChatAnthropic(Haiku 4.5), tools=[search_papers, search_memory, read_file, write_file, send_email], prompt=...)`（代码见附录 A.2；**不用 deepagents**，理由见 handover §6.1）。system prompt 只讲身份 + 工具 + "遇任务先读对应 skill"，不写死流程。
 
 | skill | 教 agent | 关键 |
 |-------|---------|------|
@@ -239,7 +239,7 @@ flowchart TB
 
 ## 5. 关键技术决策（精简）
 
-- **5.1 编排：DeepAgents（单 agent 用法）**——`create_deep_agent` 一行，原生 MCP + planning；不用 sub-agent。
+- **5.1 编排：LangGraph 原生 react（单 agent）**——`create_react_agent`（`langgraph.prebuilt`）一行，thread_id + checkpoint 自管；**不用 deepagents / sub-agent / planning**（M3/M4/M5 都是单 agent 线性/ReAct，deepagents 头部能力出范围，见 handover §6.1）。
 - **5.2 记忆：文件系统 + grep**——单用户、5 年 ≤ 2 万篇，grep < 100ms；markdown 可读可手改；不引入向量库。
 - **5.3 对话 state / 并发：LangGraph 原生**——thread_id + checkpoint 自管持久化与隔离；❌ 不自建 `messages` / `locks`。
 - **5.4 元数据库：PostgreSQL 3 表**——`users`/`pushes`/`feedback`；LangGraph 自管表不干预、不画进 ER。
@@ -280,12 +280,14 @@ search_papers(
 from paper_search_mcp.academic_platforms.arxiv import ArxivSearcher
 # ...（semantic / crossref / openalex 同理；强制日期排序参数）
 
-lit_agent = create_deep_agent(
+lit_agent = create_react_agent(  # langgraph.prebuilt，非 deepagents（理由见 handover §6.1）
     model=ChatAnthropic(model="claude-haiku-4-5-20251001", streaming=True,
-                        cache_control={"type": "ephemeral"}),
+                        base_url=settings.anthropic_base_url or None),
     tools=[search_papers, search_memory, read_file, write_file, send_email],
-    system_prompt=LIT_AGENT_SYSTEM_PROMPT,
+    prompt=LIT_AGENT_SYSTEM_PROMPT,   # 静态身份 + daily_search skill 全文（启动期拼入）
+    checkpointer=checkpointer,        # LangGraph PG checkpoint（M1 已接）
 )
+# 注：newapi 不透传 cache_control（handover §6.11 实证），不设缓存；成本靠精简 prompt + dry-run token 日志守。
 ```
 
 ### A.3 不可信内容
