@@ -80,8 +80,13 @@ async def search_papers(
     min_score: float = 6.0,
     *,
     settings: Settings | None = None,
+    stats: dict[str, int] | None = None,
 ) -> list[Paper]:
-    """搜 + 去重 + 评分 + 落盘，返回已去重已评分的 Top N（5–10）。"""
+    """搜 + 去重 + 评分 + 落盘，返回已去重已评分的 Top N（5–10）。
+
+    `stats`（可选出参）：传入一个 dict，会被填入 raw/deduped/selected 计数，
+    供 daily-push 的 pushes 审计用（默认 None，M2 调用方不受影响）。
+    """
     if sort != "date_desc":
         raise ValueError("search_papers 仅支持 sort='date_desc'（v0.4 §8 强制日期排序）")
     settings = settings or get_settings()
@@ -111,6 +116,11 @@ async def search_papers(
     for p in selected:
         path = memory_dir / "papers" / day / f"{p.paper_id}.md"
         atomic_write(path, render_paper_md(p, now))
+
+    if stats is not None:
+        stats["raw"] = len(raw)
+        stats["deduped"] = len(deduped)
+        stats["selected"] = len(selected)
 
     _log.info(
         "search_papers_done",
