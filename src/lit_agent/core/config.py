@@ -49,8 +49,9 @@ class Settings(BaseSettings):
     # S2 限流：1 req/s 累计跨所有端点。默认 1.1s 留余量；连踩 429 可调到 1.2。
     s2_min_interval_s: float = Field(default=1.1, ge=1.0)
 
-    # ---- 记忆目录 ----
-    memory_dir: Path = Path("./memory")
+    # ---- 记忆目录 / skills 目录（文件工具路径白名单）----
+    memory_dir: Path = Path("./memory")  # 读 + 写
+    skills_dir: Path = Path("./skills")  # 只读
 
     # ---- 用户与时区 ----
     user_email: str = "me@example.com"

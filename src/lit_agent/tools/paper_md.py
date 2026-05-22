@@ -51,7 +51,8 @@ _STOPWORDS = frozenset(
 _PUNCT_RE = re.compile(r"[^a-z0-9\s]+")
 _WS_RE = re.compile(r"\s+")
 _UNSAFE_ID_RE = re.compile(r"[^a-z0-9.-]+")
-_CTRL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+# 所有 C0 控制字符（含 \t \n \r）—— frontmatter 标量必须单行，否则炸 YAML。
+_CTRL_RE = re.compile(r"[\x00-\x1f\x7f]")
 _ARXIV_IN_DOI = re.compile(r"10\.48550/arxiv\.(?P<id>[\w.]+)", re.IGNORECASE)
 
 
