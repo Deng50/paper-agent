@@ -11,6 +11,7 @@ os.environ.setdefault("ENV", "dev")
 os.environ.setdefault("API_TOKEN", "test-token-123")
 os.environ.setdefault("DATABASE_URL", "postgresql+psycopg://lit:lit@localhost:5432/lit_agent_test")
 os.environ.setdefault("ANTHROPIC_API_KEY", "sk-ant-test")
+os.environ.setdefault("SEMANTIC_SCHOLAR_API_KEY", "s2k-test")
 os.environ.setdefault("MEMORY_DIR", "./memory")
 
 import pytest

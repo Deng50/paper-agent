@@ -10,7 +10,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, PostgresDsn, field_validator
+from pydantic import AliasChoices, Field, PostgresDsn, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -39,6 +39,15 @@ class Settings(BaseSettings):
     # 第三方中转网关（如 newapi）。留空 = 官方 https://api.anthropic.com。
     # 注意：填网关根域名，不要带 /v1（SDK 自己会拼 /v1/messages）。
     anthropic_base_url: str = ""
+
+    # ---- Semantic Scholar（必填，无默认 = fail-fast；不留无 key 双模式）----
+    # vendored S2 代码读环境变量 SEMANTIC_SCHOLAR_API_KEY；同时兼容 .env 里写成 S2_API_KEY。
+    semantic_scholar_api_key: str = Field(
+        min_length=1,
+        validation_alias=AliasChoices("SEMANTIC_SCHOLAR_API_KEY", "S2_API_KEY"),
+    )
+    # S2 限流：1 req/s 累计跨所有端点。默认 1.1s 留余量；连踩 429 可调到 1.2。
+    s2_min_interval_s: float = Field(default=1.1, ge=1.0)
 
     # ---- 记忆目录 ----
     memory_dir: Path = Path("./memory")

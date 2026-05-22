@@ -263,12 +263,23 @@ search_papers(
 ) -> list[Paper]
 ```
 
-内部步骤：每 query 调 MCP（`sort_by=date`，Top 20）→ 合并去重（doi/arxiv_id/normalized_title）→ 对照 `./memory/papers/` 丢弃命中 → Haiku 单次批量评分 → 过滤 `< min_score` 排序 → 原子写 Top N → 返回。
+内部步骤：每 query × 4 源**直接 import vendored 模块调 `search()`**（强制日期降序，Top 20；S2 串行限流，其余并行）→ 合并去重（doi/arxiv_id/normalized_title）→ 对照 `./memory/papers/` 丢弃命中 → Haiku 单次批量评分 → 过滤 `< min_score` 排序 → 原子写 Top N → 返回。
 
-### A.2 agent 创建
+### A.2 agent 创建与 paper-search-mcp 接入方式（v0.4 实施修订）
+
+> **接入方式（M2 实施定稿）**：`paper-search-mcp` 不以 MCP stdio 子进程运行，而是
+> **fork 锁版本 vendored 进 `vendor/paper-search-mcp/`，由 `search_papers` 工具直接 import
+> 其 4 个 source 类（`ArxivSearcher`/`SemanticSearcher`/`CrossRefSearcher`/`OpenAlexSearcher`）**。
+> 理由：MCP 协议价值在跨语言/跨进程，而 vendored 进来本就是 Python；上游 console_scripts
+> 入口已坏（issue #64）；直接 import 可调试、可打 patch、符合减法。详见
+> [vendor/paper-search-mcp/VENDOR.md](../vendor/paper-search-mcp/VENDOR.md)。
+> ❌ 不再使用 `MultiServerMCPClient` 拉起 MCP 子进程。
 
 ```python
-mcp_tools = await MultiServerMCPClient({"paper_search": {...}}).get_tools()
+# search_papers 工具内部（节选）：直接 import vendored 模块，非 MCP 子进程
+from paper_search_mcp.academic_platforms.arxiv import ArxivSearcher
+# ...（semantic / crossref / openalex 同理；强制日期排序参数）
+
 lit_agent = create_deep_agent(
     model=ChatAnthropic(model="claude-haiku-4-5-20251001", streaming=True,
                         cache_control={"type": "ephemeral"}),
