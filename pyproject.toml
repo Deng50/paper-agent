@@ -85,6 +85,7 @@ module = [
     "paper_search_mcp.*",  # vendored，无类型存根
     "feedparser.*",
     "apscheduler.*",  # 无 py.typed
+    "yaml.*",  # PyYAML 传递依赖（types-PyYAML 不入项目依赖；M4 task 2 session md frontmatter）
 ]
 ignore_missing_imports = true
 
