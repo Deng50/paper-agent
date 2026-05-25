@@ -11,6 +11,12 @@ owner 拍板（§6 Q1-3 / Q2.1-4）：
 
 SSE event 类型（docs/04 §4.1 字面）：meta / tool / token / citation / done。
 keepalive 注释行 15s（docs/04 §9）由独立 asyncio task 喂 queue。
+
+stream_mode 选择：单 "updates"（每节点完成时整段 emit）。**M4 trade-off**：
+stream_mode="messages" 字符级流依赖 ChatAnthropic 实例传 streaming=True，
+而 M3 commit 8c3e68f 的 lit_agent.py:124 未传（M4_to_M5 §5 P1 已登记）；
+故 M4 emit 整段 token（有内容、非字符流），M5 配齐 streaming=True 后可补
+multi-mode 字符级 chunks。
 """
 
 from __future__ import annotations
@@ -80,51 +86,50 @@ async def _produce_events(
         seen_msg_ids: set[str] = set()
         token_usage = {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0}
 
-        async for mode, payload in agent.astream(
+        async for state_update in agent.astream(
             {"messages": [user_msg]},
             config=config,
-            stream_mode=["updates", "messages"],
+            stream_mode="updates",
         ):
-            if mode == "messages":
-                chunk, _meta = payload
-                if isinstance(chunk, AIMessage):
-                    text = chunk.content if isinstance(chunk.content, str) else ""
-                    if text:
-                        await queue.put(format_sse_event("token", {"delta": text}))
-            elif mode == "updates":
-                for _node, state_delta in payload.items():
-                    if not isinstance(state_delta, dict):
+            for _node, state_delta in state_update.items():
+                if not isinstance(state_delta, dict):
+                    continue
+                new_msgs = state_delta.get("messages") or []
+                for msg in new_msgs:
+                    mid = str(getattr(msg, "id", None) or id(msg))
+                    if mid in seen_msg_ids:
                         continue
-                    new_msgs = state_delta.get("messages") or []
-                    for msg in new_msgs:
-                        mid = str(getattr(msg, "id", None) or id(msg))
-                        if mid in seen_msg_ids:
-                            continue
-                        seen_msg_ids.add(mid)
+                    seen_msg_ids.add(mid)
 
-                        if isinstance(msg, AIMessage):
-                            for tc in msg.tool_calls or []:
-                                await queue.put(
-                                    format_sse_event(
-                                        "tool",
-                                        {"name": tc.get("name"), "args": tc.get("args", {})},
-                                    )
+                    if isinstance(msg, AIMessage):
+                        for tc in msg.tool_calls or []:
+                            await queue.put(
+                                format_sse_event(
+                                    "tool",
+                                    {"name": tc.get("name"), "args": tc.get("args", {})},
                                 )
-                            um: dict[str, Any] = dict(msg.usage_metadata or {})
-                            token_usage["input"] += int(um.get("input_tokens", 0))
-                            token_usage["output"] += int(um.get("output_tokens", 0))
-                            details = um.get("input_token_details") or {}
-                            token_usage["cache_read"] += int(details.get("cache_read", 0) or 0)
-                            token_usage["cache_creation"] += int(
-                                details.get("cache_creation", 0) or 0
                             )
-                        elif isinstance(msg, ToolMessage) and msg.name == "read_file_tool":
-                            content_text = msg.content if isinstance(msg.content, str) else ""
-                            citation = _parse_paper_md_citation(content_text)
-                            if citation:
-                                await queue.put(
-                                    format_sse_event("citation", {"papers": [citation]})
-                                )
+                        um: dict[str, Any] = dict(msg.usage_metadata or {})
+                        token_usage["input"] += int(um.get("input_tokens", 0))
+                        token_usage["output"] += int(um.get("output_tokens", 0))
+                        details = um.get("input_token_details") or {}
+                        token_usage["cache_read"] += int(details.get("cache_read", 0) or 0)
+                        token_usage["cache_creation"] += int(details.get("cache_creation", 0) or 0)
+                        if isinstance(msg.content, str) and msg.content.strip():
+                            await queue.put(format_sse_event("token", {"delta": msg.content}))
+                        elif isinstance(msg.content, list):
+                            for block in msg.content:
+                                if isinstance(block, dict) and block.get("type") == "text":
+                                    block_text = str(block.get("text", "") or "")
+                                    if block_text:
+                                        await queue.put(
+                                            format_sse_event("token", {"delta": block_text})
+                                        )
+                    elif isinstance(msg, ToolMessage) and msg.name == "read_file_tool":
+                        content_text = msg.content if isinstance(msg.content, str) else ""
+                        citation = _parse_paper_md_citation(content_text)
+                        if citation:
+                            await queue.put(format_sse_event("citation", {"papers": [citation]}))
 
         await queue.put(
             format_sse_event("done", {"finish_reason": "stop", "token_usage": token_usage})

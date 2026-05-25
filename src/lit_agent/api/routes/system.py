@@ -74,10 +74,17 @@ def _check_memory_dir(memory_dir: Path) -> Check:
 
 
 def _check_paper_search_mcp(cmd: str) -> Check:
-    # M2 才接入 paper-search-mcp。M1 未配置时如实标记，不伪装健康。
-    if not cmd.strip():
-        return Check(ok=False, detail="not configured (wired in M2)")
-    return Check(ok=True, detail=f"configured: {cmd}")
+    # M2 起 vendored 接入（docs/02 §A.2 字面：fork 锁版本进 vendor/，不再 MCP 子进程）。
+    # 探针检测 vendored 4 源模块可 import 即视为健康；cmd 入参保留兼容 settings。
+    _ = cmd  # M2 后不再使用 stdio 子进程命令
+    try:
+        from paper_search_mcp.academic_platforms.arxiv import ArxivSearcher  # noqa: F401
+        from paper_search_mcp.academic_platforms.crossref import CrossRefSearcher  # noqa: F401
+        from paper_search_mcp.academic_platforms.openalex import OpenAlexSearcher  # noqa: F401
+        from paper_search_mcp.academic_platforms.semantic import SemanticSearcher  # noqa: F401
+    except ImportError as exc:
+        return Check(ok=False, detail=f"vendored import failed: {exc}")
+    return Check(ok=True, detail="vendored: arxiv/s2/crossref/openalex")
 
 
 async def _check_anthropic(api_key: str, base_url: str = "") -> Check:
