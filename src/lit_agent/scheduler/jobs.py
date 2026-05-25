@@ -52,6 +52,8 @@ def _extract(result: dict[str, Any]) -> dict[str, Any]:
     intro = ""
     in_tok = 0
     out_tok = 0
+    cache_read = 0
+    cache_creation = 0
     for m in messages:
         if isinstance(m, ToolMessage) and m.name == "search_papers_tool":
             try:
@@ -67,6 +69,10 @@ def _extract(result: dict[str, Any]) -> dict[str, Any]:
             um: dict[str, Any] = dict(m.usage_metadata or {})
             in_tok += int(um.get("input_tokens", 0))
             out_tok += int(um.get("output_tokens", 0))
+            # cache 字段：经 newapi 应恒为 0（handover §6.11 探针实证不透传）；记录以监控隐式缓存。
+            details = um.get("input_token_details") or {}
+            cache_read += int(details.get("cache_read", 0) or 0)
+            cache_creation += int(details.get("cache_creation", 0) or 0)
             if isinstance(m.content, str) and m.content.strip():
                 intro = m.content.strip()  # 最后一条非空 AI 文本 = 导语
     return {
@@ -74,7 +80,12 @@ def _extract(result: dict[str, Any]) -> dict[str, Any]:
         "papers": papers,
         "queries": queries,
         "intro": intro,
-        "tokens": {"input": in_tok, "output": out_tok},
+        "tokens": {
+            "input": in_tok,
+            "output": out_tok,
+            "cache_read": cache_read,
+            "cache_creation": cache_creation,
+        },
     }
 
 
@@ -86,6 +97,8 @@ def _log_token_budget(run_date: dt.date, tokens: dict[str, int]) -> None:
         run_date=str(run_date),
         input_tokens=tokens["input"],
         output_tokens=tokens["output"],
+        cache_read_input_tokens=tokens.get("cache_read", 0),
+        cache_creation_input_tokens=tokens.get("cache_creation", 0),
         est_cost_usd=round(cost, 5),
         note="newapi 无缓存(handover §6.11)，按 Haiku4.5 官方价 $1/$5 per MTok 下限估",
     )
