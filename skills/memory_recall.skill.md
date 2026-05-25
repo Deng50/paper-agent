@@ -30,6 +30,10 @@ M4 验收硬指标「上下文已有时零工具调用」。
   - 返回 `[{path, snippet}]`，按路径倒序（新日期目录在前 = 新内容优先）。
 - **`search_papers(queries, min_score)`** —— **去 4 源拉新文献**（带去重 + 评分
   + 落盘）。**用于「找最近 / 还没看过的」**。一次调用拿干净 Top N，**绝不连调**。
+- **`list_dir(path)`** —— 列 `./memory/` 或 `skills/` 下某目录的条目名（不递归）。
+  **用于「回顾全部 / 看看 archive」宽泛请求**：先 `list_dir("./memory/papers/")` 看日期
+  目录，再 `list_dir("./memory/papers/{date}/")` 看具体文件。**比 search_memory 给空
+  token 更可靠**（空 query → `[]`，没用）。
 
 ## Trigger 启发式
 
@@ -43,6 +47,18 @@ M4 验收硬指标「上下文已有时零工具调用」。
 | 偏好查询 | "我设过少推液态添加剂没" | `profile` |
 | 反馈历史 | "我给哪几篇点过赞" | `feedback` |
 | 跨类 / 不确定 | "之前有提过这个吗" | `all` |
+
+### 应该 `list_dir`（不是 search_memory）
+
+| 用户意图特征 | 例 | 路径 |
+|------------|----|------|
+| 「回顾全部 / 看看推过的」无具体 token | "回顾之前推送过的内容" | `./memory/papers/` 先列日期，再 `./memory/papers/{date}/` 列文件 |
+| 「最近几天推了什么」时间范围 | "5 月推过几篇？" | 同上，按日期目录数 |
+| 「我有几个对话归档」 | "看下我所有 chat 记录" | `./memory/sessions/` |
+
+**关键**：宽泛"回顾"类请求**绝不要给 search_memory 空 query 或硬编造 token**（如
+"今天 推送" / "之前 文献"）——这种 token paper.md 不含，必定 0 命中，agent 看到 0
+hits 会幻觉答「档案为空」**撒谎**。先 list_dir 看真实有什么，再回答。
 
 ### 不该调任何工具
 
