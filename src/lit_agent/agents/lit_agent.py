@@ -24,7 +24,7 @@ from langgraph.prebuilt import create_react_agent
 
 from lit_agent.core.config import Settings, get_settings
 from lit_agent.tools.memory import list_dir, read_file, search_memory
-from lit_agent.tools.search_papers import search_papers
+from lit_agent.tools.search_papers import FORCE_RERUN_DEDUP, search_papers
 
 if TYPE_CHECKING:
     from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -59,7 +59,12 @@ async def search_papers_tool(queries: list[str], min_score: float = 6.0) -> str:
     入参 queries 为 3-5 条英文检索词。返回 JSON：{counts:{raw,deduped,selected}, papers:[...]}。
     """
     stats: dict[str, int] = {}
-    papers = await search_papers(queries=queries, min_score=min_score, stats=stats)
+    # force=True 路径（jobs.py run_daily_push set ContextVar）→ dedup=False 允许重
+    # 命中已存 paper（方案 A）；ContextVar deterministic，不依赖 LLM 解析 kickoff prompt。
+    dedup = not FORCE_RERUN_DEDUP.get()
+    papers = await search_papers(
+        queries=queries, min_score=min_score, dedup_against_memory=dedup, stats=stats
+    )
     payload = {
         "counts": stats,
         "papers": [

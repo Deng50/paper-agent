@@ -20,6 +20,7 @@ agent 调一次拿干净 Top N，不参与任何 for 循环。
 
 from __future__ import annotations
 
+import contextvars
 import datetime as dt
 from pathlib import Path
 
@@ -34,6 +35,14 @@ from lit_agent.tools.scoring import score_papers
 _log = structlog.get_logger("search_papers")
 
 TOP_N_CAP = 10  # 每次精选上限（PRD「5–10 篇」）
+
+# Force rerun scope（deterministic，不依赖 LLM prompt）：
+# jobs.py force=True 时在 task scope 内 set True；search_papers_tool 读此 var
+# 决定 dedup_against_memory，PEP 567 async context 透传到 LangGraph tool node。
+# 默认 False = M3 既有 idempotent 行为；reset via token 防泄漏。
+FORCE_RERUN_DEDUP: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "lit_agent.force_rerun_dedup", default=False
+)
 
 
 def _dedup_in_batch(papers: list[Paper]) -> list[Paper]:
@@ -110,12 +119,21 @@ async def search_papers(
     selected.sort(key=lambda p: p.score or 0.0, reverse=True)
     selected = selected[:TOP_N_CAP]
 
-    # 6. 原子写
+    # 6. 原子写（force_rerun 时若 paper.md 已存则 skip，方案 A 字面：不重写已存）
     now = dt.datetime.now().astimezone()
     day = now.date().isoformat()
+    saved = 0
+    skipped_existing = 0
     for p in selected:
         path = memory_dir / "papers" / day / f"{p.paper_id}.md"
+        if path.exists():
+            skipped_existing += 1
+            _log.info("search_papers_skip_existing_md", paper_id=p.paper_id, path=str(path))
+            continue
         atomic_write(path, render_paper_md(p, now))
+        saved += 1
+    if skipped_existing:
+        _log.info("search_papers_save_summary", saved=saved, skipped_existing=skipped_existing)
 
     if stats is not None:
         stats["raw"] = len(raw)

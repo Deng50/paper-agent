@@ -460,7 +460,14 @@ data: {"finish_reason":"stop","token_usage":{"input":1500,"output":42,"model":"c
 | 字段 | 说明 |
 |------|------|
 | `run_date` | 推送日期；缺省为今天 |
-| `force` | `true` 时即使当天已推送也强制重跑 |
+| `force` | `true` 时即使当天已推送也强制重跑（见下方语义） |
+
+**`force=true` 语义**（owner 拍方案 A，PR-1 落地）：
+
+1. **清同 thread checkpoint**：`AsyncPostgresSaver.adelete_thread(thread_id)` 删 LangGraph 三张自管表的同 `daily_push:YYYY-MM-DD` 行，破 handover §3.9「同 thread 复用 ToolMessage」屏障，强制 agent 重新调 `search_papers`（不直接复用上次结果）
+2. **绕过历史去重**：`search_papers_tool` 内部读 `FORCE_RERUN_DEDUP` ContextVar（PEP 567 async 透传到 LangGraph tool node），force=True 时传 `dedup_against_memory=False`，允许 4 源命中已存 paper_id；deterministic，不依赖 LLM 解析 kickoff prompt
+3. **不重写已存 paper.md**：`search_papers.py` 落盘前 `if path.exists(): continue`，保留原内容（含 arxiv v2 → v3 也不覆盖；owner 若要拉新版本须**手动 `rm` 该 paper.md** 再触发 force）；log `search_papers_skip_existing_md`
+4. **覆盖 PG pushes 行**：`_claim_run(force=True)` 让 `success` 状态行 reset 到 `running`，跑完写回新 `selected_count` / `selected_papers` / `email_sent`（原行被覆盖，**不新建行**）
 
 **Response 202**：
 
