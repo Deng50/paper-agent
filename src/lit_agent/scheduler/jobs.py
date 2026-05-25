@@ -105,26 +105,30 @@ def _log_token_budget(run_date: dt.date, tokens: dict[str, int]) -> None:
 
 
 async def _claim_run(
-    s: AsyncSession, run_date: dt.date, triggered_by: str
+    s: AsyncSession, run_date: dt.date, triggered_by: str, *, force: bool = False
 ) -> tuple[int, str] | None:
-    """占位/闸：返回 (push_id, "proceed") 表示可跑；返回 None 表示自拒（busy / already_done）。"""
+    """占位/闸：返回 (push_id, "proceed") 表示可跑；返回 None 表示自拒（busy / already_done）。
+
+    force=True：success 也强制重跑（docs/04 §8.1 字面），不绕开 running busy 闸。
+    """
     existing = (
         await s.execute(select(Push).where(Push.user_id == 1, Push.run_date == run_date))
     ).scalar_one_or_none()
     if existing is not None:
-        if existing.status == "success":
-            _log.info("daily_push_already_done", run_date=str(run_date))
-            return None
         if existing.status == "running":
             _log.info("daily_push_busy_skip", run_date=str(run_date), reason="今日推送仍在跑")
             return None
-        # failed / partial → 合法补跑
+        if existing.status == "success" and not force:
+            _log.info("daily_push_already_done", run_date=str(run_date))
+            return None
+        # success+force / failed / partial → 重跑（覆盖既有行）
         existing.status = "running"
         existing.error = None
         existing.triggered_by = triggered_by
         existing.started_at = dt.datetime.now(dt.UTC)
         await s.commit()
-        return existing.id, "retry"
+        _log.info("daily_push_force_rerun" if force else "daily_push_retry", run_date=str(run_date))
+        return existing.id, "force" if force else "retry"
     push = Push(user_id=1, run_date=run_date, triggered_by=triggered_by, status="running")
     s.add(push)
     try:
@@ -142,15 +146,22 @@ async def run_daily_push(
     *,
     settings: Settings | None = None,
     session_factory: async_sessionmaker[AsyncSession] | None = None,
+    force: bool = False,
+    run_date_override: dt.date | None = None,
 ) -> str:
-    """执行一次每日推送。返回状态字符串：busy/already_done/success/partial/failed。"""
+    """执行一次每日推送。返回状态字符串：busy/already_done/success/partial/failed。
+
+    force=True：今日 status=success 时仍强制重跑（owner 手动触发覆盖；docs/04 §8.1
+    字面）；同一 thread_id checkpoint 复用（handover §3.9 行为提醒）。
+    run_date_override：补跑历史某天用；缺省取 settings._run_date（今天）。
+    """
     settings = settings or get_settings()
     factory = session_factory or get_session_factory()
-    run_date = _run_date(settings)
+    run_date = run_date_override or _run_date(settings)
     thread_id = f"daily_push:{run_date.isoformat()}"
 
     async with factory() as s:
-        claim = await _claim_run(s, run_date, triggered_by)
+        claim = await _claim_run(s, run_date, triggered_by, force=force)
     if claim is None:
         return "busy"
     push_id, _ = claim

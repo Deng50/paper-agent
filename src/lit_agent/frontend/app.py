@@ -41,10 +41,16 @@ tab_push, tab_status = st.tabs(["📬 每日推送", "🩺 系统状态"])
 
 # ---------------- 每日推送 ----------------
 with tab_push:
+    force_rerun = st.checkbox(
+        "强制重跑（覆盖今日 success）",
+        value=False,
+        help="今日 pushes.status=success 时默认 already_done 跳过；勾选则强制重新搜+评分+发邮件。",
+    )
     if st.button("▶️ 立即触发一次推送", type="primary"):
-        code, data = api_post("/api/v1/admin/trigger/daily-push")
+        code, data = api_post("/api/v1/admin/trigger/daily-push", payload={"force": force_rerun})
         if code == 202:
-            st.success("已触发（后台执行）。稍后刷新查看会话，或查收邮件。")
+            label = "已触发（强制重跑）" if force_rerun else "已触发（后台执行）"
+            st.success(f"{label}。稍后刷新查看会话，或查收邮件。")
         else:
             st.error(f"触发失败 HTTP {code}：{data}")
 
