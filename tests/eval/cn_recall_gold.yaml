@@ -1,0 +1,117 @@
+# 中文召回率黄金集（M4 task 7 / docs/05 §5）
+#
+# 验收硬指标（docs/05 §5）：
+#   - 跨日召回（文献）5 题 ≥ 4/5
+#   - 跨日召回（对话）≥ 4/5；scope=sessions 优先
+#   - 中文召回率 < 85% 触发 M7 SQLite FTS5 评估（docs/02 §5.5）
+#
+# 评分口径：Top-3 命中 = 1（agent search_memory 返回前 3 个文件路径中至少 1 个
+#         落入 expected_paper_ids / expected_session_ids）。Top-1 / Top-3 / Top-5
+#         三档同时输出，便于看口径敏感性（scripts/eval_cn_recall.py）。
+#
+# 主题分布（基于 M3 真 corpus 37 篇 score 7-9 frequency）：
+#   - A 硫化物固态电解质 / argyrodite / Li6PS5Cl —— corpus 12+ 篇
+#   - B 锂金属负极界面工程 / dendrite / interphase —— corpus 10+ 篇
+#   - D 聚合物 / 复合固态电解质 / PEO / PVDF / nanofiber —— corpus 4 篇
+#   每主题各 1-2 题，凑足 5 文献 + 5 对话 = 10 题。
+#
+# F 电池热管理（CLAUDE.md §1 字面方向）M3 corpus 仅 1 篇，是 corpus 稀缺警示项，
+# 单独评估不污染主结论（详见末尾 f_corpus_warning）。
+#
+# Owner 填法：
+#   - question：中文自然语言（不要预处理，eval 直接喂 search_memory）
+#   - expected_paper_ids：./memory/papers/{date}/{paper_id}.md 的 paper_id 字段
+#   - expected_session_ids：M4 chat 中期累积出真 session_id 后填
+#   - notes：自由备注（哪个推送日期 / 哪轮对话）
+
+version: 1
+verdict_threshold: top_3   # 主验收口径 = Top-3
+verdict_pass_ratio: 0.8    # 4/5 = 80%
+
+paper_questions:
+  # ---------- 主题 A — 硫化物固态电解质 ----------
+  - id: paper_A1
+    theme: A_sulfide_solid_electrolyte
+    question: ""             # TODO owner 填中文问题
+    expected_paper_ids: []   # TODO owner 从 ./memory/papers/ 挑 1-2 个 paper_id
+    scope: papers
+    notes: ""
+  - id: paper_A2
+    theme: A_sulfide_solid_electrolyte
+    question: ""
+    expected_paper_ids: []
+    scope: papers
+    notes: ""
+
+  # ---------- 主题 B — 锂金属负极界面工程 ----------
+  - id: paper_B1
+    theme: B_li_metal_anode_interface
+    question: ""
+    expected_paper_ids: []
+    scope: papers
+    notes: ""
+  - id: paper_B2
+    theme: B_li_metal_anode_interface
+    question: ""
+    expected_paper_ids: []
+    scope: papers
+    notes: ""
+
+  # ---------- 主题 D — 聚合物 / 复合固态电解质 ----------
+  - id: paper_D1
+    theme: D_polymer_composite_electrolyte
+    question: ""
+    expected_paper_ids: []
+    scope: papers
+    notes: ""
+
+session_questions:
+  # session 题须等 M4 chat 路由跑通后累积真实 chat 历史，owner 再填 expected_session_ids
+  # ---------- 主题 A ----------
+  - id: session_A1
+    theme: A_sulfide_solid_electrolyte
+    question: ""
+    expected_session_ids: []
+    scope: sessions
+    notes: "M4 chat 落地后由 owner 填"
+  - id: session_A2
+    theme: A_sulfide_solid_electrolyte
+    question: ""
+    expected_session_ids: []
+    scope: sessions
+    notes: ""
+
+  # ---------- 主题 B ----------
+  - id: session_B1
+    theme: B_li_metal_anode_interface
+    question: ""
+    expected_session_ids: []
+    scope: sessions
+    notes: ""
+  - id: session_B2
+    theme: B_li_metal_anode_interface
+    question: ""
+    expected_session_ids: []
+    scope: sessions
+    notes: ""
+
+  # ---------- 主题 D ----------
+  - id: session_D1
+    theme: D_polymer_composite_electrolyte
+    question: ""
+    expected_session_ids: []
+    scope: sessions
+    notes: ""
+
+# F 警示项：corpus 稀缺，单独评估不污染主结论（路径 (ii)，Q5 owner 拍板）
+f_corpus_warning:
+  theme: F_thermal_management
+  corpus_count: 1
+  corpus_evidence: "./memory/papers/2026-05-22/arxiv-2605.21619v1.md (score 7.0, 唯一一篇)"
+  expected_recall: "near 0 due to corpus sparsity (not algorithmic failure)"
+  paper_questions: []     # 若 owner 想加 F 对照题，按 paper_questions 同结构填
+  session_questions: []   # 同上
+  notes: |
+    评估报告须单独算分附在末尾，不计入主集 verdict_pass_ratio。
+    若 F 召回率非 0，说明 grep 在 corpus 稀缺时仍有兜底（少量命中 = 该篇 reason
+    字段含中文主题词）。M7 SQLite FTS5 触发条件 < 85% 不基于 F 单独算分。
