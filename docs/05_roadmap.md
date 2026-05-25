@@ -137,7 +137,7 @@ flowchart LR
 | # | 任务 | 预估 |
 |---|------|------|
 | 1 | `api/routes/chat.py` `/chat` SSE（session_id=thread_id，不传则新建）+ meta/tool/citation/token/done + 15s keepalive | 4h |
-| 2 | **session md 派生写**：每轮 `done` 后从 LangGraph state 取最近一轮，原子 append 到 session md；同步 frontmatter（last_active_at / message_count / related_papers / topics 每 5 轮） | 3h |
+| 2 | **session md 派生写**：每轮 `done` 后从 LangGraph state 取最近一轮，**原子整文件重写**（复用 `tools/paper_md.py::atomic_write`，整 md = frontmatter + 历史正文 + 新追加轮一次写）；frontmatter 同步：last_active_at / message_count 每轮、related_papers / topics 每 5 轮。新轮边界靠 frontmatter `message_count` 作指针对 `agent.aget_state(...).values["messages"]` slice | 3h |
 | 3 | `skills/memory_recall.skill.md`：正例/反例表，scope 选择，related_papers 召回路径 | 2h |
 | 4 | `frontend/pages/chat.py` `st.chat_message` 流式 + 工具调用可视化 + 引用渲染 | 3h |
 | 5 | `api/routes/memory.py` `/memory/papers`（列表/详情含 cited_in）+ `/memory/profile` | 2h |

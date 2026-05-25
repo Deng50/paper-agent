@@ -128,6 +128,8 @@ flowchart LR
 | `memory_recall.skill.md` | 何时召回、走哪个 scope | 正例/反例表：模糊时间+讨论动词→`sessions`；问具体文献内容→`papers`；上下文已有→直接答 |
 | `profile_update.skill.md` | 画像自更新 | 读近期 feedback → 原子写 `profile.md` |
 
+> **拼入时序**：`daily_search` / `memory_recall` 自 M4 起默认拼入 `build_lit_agent` 的 system prompt（daily-push 继承默认 = 单 skill `daily_search` 节省 token；chat 路由显式传 `("daily_search", "memory_recall")`）。`profile_update` 留 M5 画像自更新里程碑才拼入。`build_lit_agent` 默认值保持 M3 单 skill 向后兼容。
+
 ### 3.2 agent 在推送中的角色（极简）
 
 步骤 1 读 `profile.md` → 步骤 2 生成检索词（模糊判断）→ 步骤 3 **调一次 `search_papers`** 拿干净 Top N（搜/去重/评分都在工具里）→ 步骤 4 写推送邮件 + 对话流呈现 → 步骤 5（可选）更新 profile。**❌ 不再有"agent 自己 for 循环逐篇查重/评分"**。
