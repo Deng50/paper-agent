@@ -18,92 +18,133 @@
 # F 电池热管理（CLAUDE.md §1 字面方向）M3 corpus 仅 1 篇，是 corpus 稀缺警示项，
 # 单独评估不污染主结论（详见末尾 f_corpus_warning）。
 #
-# Owner 填法：
-#   - question：中文自然语言（不要预处理，eval 直接喂 search_memory）
-#   - expected_paper_ids：./memory/papers/{date}/{paper_id}.md 的 paper_id 字段
-#   - expected_session_ids：M4 chat 中期累积出真 session_id 后填
-#   - notes：自由备注（哪个推送日期 / 哪轮对话）
+# 题目设计：每题给中文 + 英文双 query 版本 + 难度标签
+#   - direct：中文 reason / 为什么推荐你 字段直接含 query token
+#   - synonym：需要中→英 token 转换（"argyrodite" / "garnet" 等专业词）
+#   - fuzzy：模糊指代 + 同义词（"枝晶" → dendrite）
 
-version: 1
-verdict_threshold: top_3   # 主验收口径 = Top-3
-verdict_pass_ratio: 0.8    # 4/5 = 80%
+version: 2  # v2：每题加 query_zh / query_en / difficulty
+verdict_threshold: top_3
+verdict_pass_ratio: 0.8
 
 paper_questions:
   # ---------- 主题 A — 硫化物固态电解质 ----------
   - id: paper_A1
     theme: A_sulfide_solid_electrolyte
-    question: ""             # TODO owner 填中文问题
-    expected_paper_ids: []   # TODO owner 从 ./memory/papers/ 挑 1-2 个 paper_id
+    question: "上次推过的硫化物全固态电池里那篇关于聚合物粘合剂的论文用了什么策略？"
+    query_zh: "氢键 粘合剂 硫化物"
+    query_en: "hydrogen bond polymer binder sulfide"
+    expected_paper_ids:
+      - openalex-w7161571770  # Hydrogen-Bond-Networked Robust Binder ... Sulfide All-Solid-State
     scope: papers
-    notes: ""
+    difficulty: direct
+    notes: "中文 reason 字面含「氢键聚合物粘合剂用于硫化物全固态锂电池」"
+
   - id: paper_A2
     theme: A_sulfide_solid_electrolyte
-    question: ""
-    expected_paper_ids: []
+    question: "我们看过几篇 argyrodite 类电解质的论文？"
+    query_zh: "argyrodite"  # 专业词，中文 reason 可能保留原文
+    query_en: "argyrodite Li-argyrodite"
+    expected_paper_ids:
+      - openalex-w7162143664  # Insights into interfacial reactions ... Li-argyrodite
+      - openalex-w7162192345  # Boosting moisture stability ... argyrodite electrolytes
+      - s2-1b8166c55ab8181178cc75bd0d03eb2b0462ab72  # Argyrodite Solid Electrolytes
     scope: papers
-    notes: ""
+    difficulty: synonym
+    notes: "argyrodite 是专业矿石名（硫银锗矿），中文 reason 通常保留英文原词"
 
   # ---------- 主题 B — 锂金属负极界面工程 ----------
   - id: paper_B1
     theme: B_li_metal_anode_interface
-    question: ""
-    expected_paper_ids: []
+    question: "之前推过的关于抑制锂枝晶的策略有哪些？"
+    query_zh: "枝晶 锂金属"
+    query_en: "dendrite suppression lithium metal"
+    expected_paper_ids:
+      - openalex-w7161839484  # Quantum-AI suppressing dendrites
+      - openalex-w7161840358  # Piezoelectric Grain Boundaries Dendrite-Free
     scope: papers
-    notes: ""
+    difficulty: fuzzy
+    notes: "枝晶 ↔ dendrite 同义；模糊问"
+
   - id: paper_B2
     theme: B_li_metal_anode_interface
-    question: ""
-    expected_paper_ids: []
+    question: "garnet 固态电解质对锂金属负极的界面稳定性那篇怎么处理的？"
+    query_zh: "garnet 界面 锂金属"
+    query_en: "garnet solid electrolyte lithium metal interface"
+    expected_paper_ids:
+      - openalex-w7162119899  # Inorganic interphases garnet-Li interface
     scope: papers
-    notes: ""
+    difficulty: synonym
+    notes: "garnet 中文常直接用英文，reason 字段可能英文/中文混"
 
   # ---------- 主题 D — 聚合物 / 复合固态电解质 ----------
   - id: paper_D1
     theme: D_polymer_composite_electrolyte
-    question: ""
-    expected_paper_ids: []
+    question: "PVDF 基聚合物固态电解质有什么新设计？"
+    query_zh: "PVDF 聚合物 电解质"
+    query_en: "PVDF polymer solid-state electrolyte"
+    expected_paper_ids:
+      - openalex-w7161850972  # PVDF Solid-State Electrolytes 双网络
     scope: papers
-    notes: ""
+    difficulty: direct
+    notes: "PVDF 中英文 reason 都常出现"
 
 session_questions:
-  # session 题须等 M4 chat 路由跑通后累积真实 chat 历史，owner 再填 expected_session_ids
-  # ---------- 主题 A ----------
+  # 注：session 题需 M4 chat 路由跑通累积真 chat 历史后由 owner 填具体 session_id
+  # （session md 路径形如 ./memory/sessions/{date}/{HH-MM}-chat.md，basename 用作 id）
+  # 占位 query 已写好，expected_session_ids 待 demo 后填
+
   - id: session_A1
     theme: A_sulfide_solid_electrolyte
-    question: ""
-    expected_session_ids: []
+    question: "我们之前怎么讨论的氢键粘合剂在硫化物里的应用？"
+    query_zh: "氢键 粘合剂"
+    query_en: "hydrogen bond binder"
+    expected_session_ids: []  # TODO M4 demo 后 owner 填
     scope: sessions
-    notes: "M4 chat 落地后由 owner 填"
+    difficulty: direct
+    notes: "对话题；M4 chat 累积后 owner 填"
+
   - id: session_A2
     theme: A_sulfide_solid_electrolyte
-    question: ""
+    question: "argyrodite 那篇论文我们的看法是什么？"
+    query_zh: "argyrodite"
+    query_en: "argyrodite"
     expected_session_ids: []
     scope: sessions
-    notes: ""
+    difficulty: synonym
+    notes: "对话题"
 
-  # ---------- 主题 B ----------
   - id: session_B1
     theme: B_li_metal_anode_interface
-    question: ""
+    question: "锂枝晶抑制我们提过哪几种思路？"
+    query_zh: "枝晶 抑制"
+    query_en: "dendrite suppression"
     expected_session_ids: []
     scope: sessions
-    notes: ""
+    difficulty: fuzzy
+    notes: "对话题"
+
   - id: session_B2
     theme: B_li_metal_anode_interface
-    question: ""
+    question: "garnet 界面那个论文我们怎么解读的？"
+    query_zh: "garnet 界面"
+    query_en: "garnet interface"
     expected_session_ids: []
     scope: sessions
-    notes: ""
+    difficulty: synonym
+    notes: "对话题"
 
-  # ---------- 主题 D ----------
   - id: session_D1
     theme: D_polymer_composite_electrolyte
-    question: ""
+    question: "PVDF 电解质我们聊过哪些方面？"
+    query_zh: "PVDF"
+    query_en: "PVDF"
     expected_session_ids: []
     scope: sessions
-    notes: ""
+    difficulty: direct
+    notes: "对话题"
 
-# F 警示项：corpus 稀缺，单独评估不污染主结论（路径 (ii)，Q5 owner 拍板）
+# F 警示项：corpus 稀缺，单独算分不污染主结论（路径 (ii)，Q5 owner 拍板）
 f_corpus_warning:
   theme: F_thermal_management
   corpus_count: 1
