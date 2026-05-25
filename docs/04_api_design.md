@@ -298,9 +298,31 @@ data: {"finish_reason":"stop","token_usage":{"input":1500,"output":42,"model":"c
 
 ### 5.3 DELETE /api/v1/sessions/{session_id}
 
-硬删除会话：删除 LangGraph 该 `thread_id` 的 checkpoint + 删除对应 session md 文件。
+硬删除会话（M4 §6 Q8 owner 拍板，最终一致 + 先 md 后 PG）：
+
+1. **`thread_id` 以 `daily_push:` 开头 → 400 `DAILY_PUSH_NOT_DELETABLE`**
+   （PG `pushes` 表是审计 source of truth，不可被本端点删；CLAUDE.md §2
+   第 4 条）。
+2. **先删 session md**（用户感知层 = 列表立即不可见）。md 文件 IO 失败 → 500。
+3. **再删 LangGraph checkpoint**（`AsyncPostgresSaver.adelete_thread(thread_id)`
+   清 `checkpoints` / `checkpoint_blobs` / `checkpoint_writes` 三张框架自管表，
+   见 `langgraph/checkpoint/postgres/aio.py:340-361`）。
+4. **checkpoint 删失败 → log warning + 仍返回 204**（最终一致；thread_id UUID
+   不复用 = orphan state 不影响功能；由 M6 运维脚本兜底清理）。
 
 **Response 204**：空 body。
+
+**Response 400**（`code=DAILY_PUSH_NOT_DELETABLE`）：
+
+```json
+{
+  "type": "about:blank",
+  "title": "Bad Request",
+  "status": 400,
+  "code": "DAILY_PUSH_NOT_DELETABLE",
+  "detail": "daily-push 会话不可删（PG pushes 审计需保留）"
+}
+```
 
 ---
 

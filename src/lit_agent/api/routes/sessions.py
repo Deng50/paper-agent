@@ -11,13 +11,14 @@ import datetime as dt
 from typing import Any
 
 import structlog
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel
 from sqlalchemy import select
 
 from lit_agent.core.config import get_settings
 from lit_agent.core.deps import AuthDep, DbDep
 from lit_agent.db.models import Push
+from lit_agent.tools.session_md import find_existing_by_thread, trigger_of
 
 router = APIRouter(prefix="/api/v1", tags=["sessions"], dependencies=[AuthDep])
 _log = structlog.get_logger("sessions")
@@ -102,3 +103,46 @@ async def get_session(run_date: dt.date, db: DbDep) -> SessionDetail:
         queries=push.queries or [],
         error=push.error,
     )
+
+
+@router.delete("/sessions/{thread_id}", status_code=204)
+async def delete_session(thread_id: str) -> Response:
+    """硬删 chat 会话（M4 task / docs/04 §5.3）。
+
+    Owner 拍板 Q8 最终一致：
+    1. daily_push: 前缀 → 400 DAILY_PUSH_NOT_DELETABLE（PG pushes 审计需保留）
+    2. 先删 md（用户感知层 = 列表立即不可见）
+    3. 再删 LangGraph checkpoint（PG 三张自管表 by adelete_thread）
+    4. PG 删失败仍返回 204 + log warning；orphan checkpoint state 由后续运维兜底
+       （thread_id UUID 不复用 = 不影响功能）
+    """
+    if trigger_of(thread_id) == "daily-push":
+        exc = HTTPException(status_code=400, detail="daily-push 会话不可删（PG pushes 审计需保留）")
+        exc.code = "DAILY_PUSH_NOT_DELETABLE"  # type: ignore[attr-defined]
+        raise exc
+
+    settings = get_settings()
+    md_path = find_existing_by_thread(thread_id, settings)
+    if md_path is not None and md_path.exists():
+        try:
+            md_path.unlink()
+            _log.info("session_md_deleted", thread_id=thread_id, path=str(md_path))
+        except OSError as exc:
+            _log.error("session_md_delete_failed", thread_id=thread_id, error=str(exc))
+            raise HTTPException(status_code=500, detail="无法删除会话归档") from exc
+
+    try:
+        from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+
+        async with AsyncPostgresSaver.from_conn_string(settings.psycopg_dsn) as saver:
+            await saver.adelete_thread(thread_id)
+        _log.info("checkpoint_deleted", thread_id=thread_id)
+    except Exception as exc:
+        _log.warning(
+            "checkpoint_delete_failed_orphan",
+            thread_id=thread_id,
+            md_path=str(md_path) if md_path else None,
+            error=str(exc),
+        )
+
+    return Response(status_code=204)
