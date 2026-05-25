@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -103,15 +104,22 @@ def _load_skill(name: str, settings: Settings) -> str:
 def build_lit_agent(
     checkpointer: BaseCheckpointSaver[Any] | None = None,
     settings: Settings | None = None,
-) -> Any:  # create_react_agent 返回 CompiledStateGraph，泛型 arity 在 langgraph 间不稳，框架边界用 Any
-    """构造 lit_agent。daily_search skill 全文拼进静态 system prompt。
+    skills: Sequence[str] = ("daily_search",),
+) -> (
+    Any
+):  # create_react_agent 返回 CompiledStateGraph，泛型 arity 在 langgraph 间不稳，框架边界用 Any
+    """构造 lit_agent。`skills` 列表的 *.skill.md 全文按顺序拼入静态 system prompt。
+
+    skills 默认 `("daily_search",)` 保持 M3 daily-push 单 skill 行为向后兼容；
+    M4 chat 路由显式传 `("daily_search", "memory_recall")`。`profile_update.skill.md`
+    留 M5 画像自更新里程碑才拼入（不默认开启，避免每次推送多付 token）。
 
     注：newapi 不透传 cache_control（handover §6.11），故不设缓存；成本靠精简 prompt
     + dry-run token 日志守（见 scheduler/jobs.py）。
     """
     settings = settings or get_settings()
-    skill = _load_skill("daily_search", settings)
-    system_prompt = f"{_BASE_SYSTEM_PROMPT}\n\n## SKILL：daily_search\n\n{skill}"
+    skill_sections = [f"## SKILL：{name}\n\n{_load_skill(name, settings)}" for name in skills]
+    system_prompt = "\n\n".join([_BASE_SYSTEM_PROMPT, *skill_sections])
 
     model = ChatAnthropic(
         model=AGENT_MODEL,
