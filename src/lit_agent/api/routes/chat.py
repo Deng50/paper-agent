@@ -39,7 +39,7 @@ from lit_agent.agents.lit_agent import build_lit_agent
 from lit_agent.api._sse import KEEPALIVE_INTERVAL_S, SSE_KEEPALIVE, format_sse_event
 from lit_agent.core.config import Settings, get_settings
 from lit_agent.core.deps import AuthDep
-from lit_agent.tools.session_md import derive_session_md
+from lit_agent.tools.session_md import derive_session_md, list_all_sessions
 
 router = APIRouter(prefix="/api/v1", tags=["chat"], dependencies=[AuthDep])
 _log = structlog.get_logger("chat")
@@ -253,3 +253,72 @@ async def chat(body: ChatRequest, request: Request) -> StreamingResponse:
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@router.get("/chat/sessions")
+async def list_chat_sessions() -> dict[str, Any]:
+    """列所有 chat / daily-push 历史会话（扫 ./memory/sessions/ md frontmatter）。
+
+    PR-2 Bug 2 落地：前端启动 / 刷新时拉此列表填侧栏。按 last_active_at desc 排序。
+    """
+    settings = get_settings()
+    items = list_all_sessions(settings)
+    return {"items": items, "total": len(items)}
+
+
+def _serialize_message(msg: BaseMessage) -> dict[str, Any]:
+    """LangGraph BaseMessage → 前端可消费 dict（保留 tool_calls / ToolMessage 全部）。
+
+    Bug 2 落地补 1：历史消息渲染必须含 tool / tool_result，前端按 expander 折叠展示
+    与流式时 tool / citation event 视觉一致；不能 filter 掉 ToolMessage（owner 拍）。
+    """
+    base: dict[str, Any] = {
+        "id": str(getattr(msg, "id", None) or id(msg)),
+        "content": msg.content,
+    }
+    if isinstance(msg, HumanMessage):
+        base["role"] = "user"
+    elif isinstance(msg, AIMessage):
+        base["role"] = "assistant"
+        base["tool_calls"] = [
+            {"name": tc.get("name"), "args": tc.get("args", {}), "id": tc.get("id")}
+            for tc in (msg.tool_calls or [])
+        ]
+        um: dict[str, Any] = dict(msg.usage_metadata or {})
+        if um:
+            base["token_usage"] = {
+                "input": int(um.get("input_tokens", 0)),
+                "output": int(um.get("output_tokens", 0)),
+            }
+    elif isinstance(msg, ToolMessage):
+        base["role"] = "tool"
+        base["name"] = msg.name
+        base["tool_call_id"] = msg.tool_call_id
+    else:
+        base["role"] = "unknown"
+    return base
+
+
+@router.get("/chat/sessions/{thread_id}/messages")
+async def get_chat_session_messages(thread_id: str) -> dict[str, Any]:
+    """从 LangGraph PG checkpoint 读历史 messages，转结构化 dict 返回。
+
+    保留 tool_calls / ToolMessage 全部（Bug 2 owner 拍：前端切回历史会话要看到
+    agent 调过哪些工具 / 找到的引用）。daily-push thread 也可访问（不限 chat）。
+    若 thread 无 checkpoint（譬如刚清过 / 不存在）返回 messages=[]，前端按空会话处理。
+    """
+    settings = get_settings()
+    messages_out: list[dict[str, Any]] = []
+    try:
+        async with AsyncPostgresSaver.from_conn_string(settings.psycopg_dsn) as saver:
+            agent = build_lit_agent(checkpointer=saver, settings=settings)
+            snap = await agent.aget_state({"configurable": {"thread_id": thread_id}})
+        raw = snap.values.get("messages", []) if snap and snap.values else []
+        for msg in raw:
+            try:
+                messages_out.append(_serialize_message(msg))
+            except Exception as exc:
+                _log.warning("chat_message_serialize_failed", thread_id=thread_id, error=str(exc))
+    except Exception as exc:
+        _log.warning("chat_session_messages_read_failed", thread_id=thread_id, error=str(exc))
+    return {"thread_id": thread_id, "messages": messages_out, "total": len(messages_out)}

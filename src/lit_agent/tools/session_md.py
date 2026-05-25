@@ -71,6 +71,42 @@ def find_existing_by_thread(thread_id: str, settings: Settings | None = None) ->
     return None
 
 
+def list_all_sessions(settings: Settings | None = None) -> list[dict[str, Any]]:
+    """扫 ./memory/sessions/ 返回所有 md 的 frontmatter 摘要，按 last_active_at desc。
+
+    每项含 thread_id / trigger / started_at / last_active_at / message_count /
+    topics / related_papers / md_path（相对 memory_dir 父目录的展示路径）。
+    跳过 frontmatter 损坏或无 thread_id 的文件。
+    """
+    settings = settings or get_settings()
+    sessions_root = settings.memory_dir / "sessions"
+    if not sessions_root.is_dir():
+        return []
+    items: list[dict[str, Any]] = []
+    for md in sessions_root.rglob("*.md"):
+        try:
+            fm, _body = _parse_existing(md)
+        except (OSError, yaml.YAMLError):
+            continue
+        tid = fm.get("thread_id")
+        if not tid:
+            continue
+        items.append(
+            {
+                "thread_id": tid,
+                "trigger": fm.get("trigger") or trigger_of(str(tid)),
+                "started_at": fm.get("started_at"),
+                "last_active_at": fm.get("last_active_at"),
+                "message_count": int(fm.get("message_count", 0) or 0),
+                "topics": fm.get("topics") or [],
+                "related_papers": fm.get("related_papers") or [],
+                "md_path": str(md),
+            }
+        )
+    items.sort(key=lambda x: str(x.get("last_active_at") or ""), reverse=True)
+    return items
+
+
 def _parse_existing(md_path: Path) -> tuple[dict[str, Any], str]:
     """读旧 md 解析 (frontmatter_dict, body_str)；不存在返回 ({}, "")。"""
     if not md_path.exists():

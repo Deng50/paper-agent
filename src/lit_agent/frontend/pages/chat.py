@@ -1,8 +1,15 @@
-"""Streamlit /chat 流式问答页（M4 task 4 / docs/05 §5）。
+"""Streamlit /chat 流式问答页（M4 task 4 + PR-2 Bug 2 历史会话管理）。
 
 owner 拍板 Q7：streamlit st.chat_message + st.write_stream + 自建 30-LOC SSE
-parser；同步 httpx.Client.stream() 省 asyncio wrapper（Q7 修订路径）。
-不引入 sse-starlette 或 httpx-sse —— 减法 + 不动 uv.lock。
+parser；同步 httpx.Client.stream() 省 asyncio wrapper。不引入 sse-starlette。
+
+PR-2 Bug 2 改造（owner 8 条能力清单 + 我之前 plan 细节 1/2）：
+- 启动 / 刷新自动拉 GET /api/v1/chat/sessions 填左侧栏历史列表
+- 点击历史会话 → 拉 GET /api/v1/chat/sessions/{tid}/messages → 渲染（保留
+  tool_calls / ToolMessage 全部，与流式时一致）
+- 🆕 新建会话只清当前 session_state（thread_id + messages），不删历史 md
+- 🗑 删除按钮二次确认（红色二态机）：点 1 次 → ⚠️ 再点确认 → 点 2 次真删
+- 首次 load 且无 session_id 时自动恢复最近一个历史会话（owner 第 8 条）
 """
 
 from __future__ import annotations
@@ -21,22 +28,63 @@ _HEADERS = {
     "Authorization": f"Bearer {API_TOKEN}",
     "Accept": "text/event-stream",
 }
+_JSON_HEADERS = {"Authorization": f"Bearer {API_TOKEN}"}
 
 st.set_page_config(page_title="💬 Chat · 文献情报 Agent", page_icon="💬")
 st.title("💬 跨日召回对话")
-st.caption("M4 · /chat SSE 流式问答")
+st.caption("M4 · /chat SSE 流式问答 + 历史会话管理")
 
-if "chat_session_id" not in st.session_state:
-    st.session_state["chat_session_id"] = None
-if "chat_messages" not in st.session_state:
-    st.session_state["chat_messages"] = []
+
+def _api_get(path: str) -> tuple[int, Any]:
+    try:
+        r = httpx.get(f"{API_BASE_URL}{path}", headers=_JSON_HEADERS, timeout=20.0)
+        return r.status_code, (r.json() if r.content else None)
+    except Exception as exc:
+        return 0, str(exc)
+
+
+def _api_delete(path: str) -> tuple[int, Any]:
+    try:
+        r = httpx.delete(f"{API_BASE_URL}{path}", headers=_JSON_HEADERS, timeout=20.0)
+        return r.status_code, (r.json() if r.content else None)
+    except Exception as exc:
+        return 0, str(exc)
+
+
+for _key, _default in (
+    ("chat_session_id", None),
+    ("chat_messages", []),
+    ("delete_confirm_tid", None),
+    ("history_loaded_once", False),
+):
+    if _key not in st.session_state:
+        st.session_state[_key] = _default
+
+
+def _load_session_messages(thread_id: str) -> None:
+    """切到历史 thread_id，拉 /messages 填 chat_messages（保留 tool/tool_result）。"""
+    st.session_state["chat_session_id"] = thread_id
+    st.session_state["delete_confirm_tid"] = None  # 清掉删除二次确认状态
+    code, data = _api_get(f"/api/v1/chat/sessions/{thread_id}/messages")
+    if code != 200 or not isinstance(data, dict):
+        st.session_state["chat_messages"] = []
+        return
+    msgs: list[dict[str, Any]] = []
+    for m in data.get("messages", []) or []:
+        msgs.append(
+            {
+                "role": m.get("role"),
+                "content": m.get("content"),
+                "tool_calls": m.get("tool_calls") or [],
+                "name": m.get("name"),
+                "tool_call_id": m.get("tool_call_id"),
+            }
+        )
+    st.session_state["chat_messages"] = msgs
 
 
 def _parse_sse_events(byte_stream: Iterator[bytes]) -> Iterator[tuple[str, dict[str, Any]]]:
-    """SSE wire parser：按 `\\n\\n` 拆 event block 流式 yield (event_name, data)。
-
-    跳过注释行（`: keepalive`）。data 多行按 SSE 规范用 `\\n` 拼接后 json.loads。
-    """
+    """SSE wire parser：按 `\\n\\n` 拆 event block 流式 yield (event_name, data)。"""
     buffer = ""
     for chunk in byte_stream:
         buffer += chunk.decode("utf-8", errors="replace")
@@ -69,8 +117,7 @@ def _stream_tokens_and_collect(
     citation_box: Any,
 ) -> Iterator[str]:
     """调 /chat SSE：token 事件 yield delta（喂 write_stream）；tool / citation
-    渲染到侧 UI；done 时把 token_usage / tool_calls / citations 落 session_state
-    供本轮 assistant message 渲染时取。"""
+    渲染到侧 UI；done 时把 token_usage / tool_calls / citations 落 session_state。"""
     payload: dict[str, Any] = {"content": user_content}
     if session_id:
         payload["session_id"] = session_id
@@ -120,7 +167,7 @@ def _stream_tokens_and_collect(
                     if code == "DANGLING_TOOL_CALL":
                         yield (
                             "\n\n⚠️ **会话历史中断**：上一轮工具调用未完成。\n\n"
-                            "请点左侧栏「🗑 新建会话（清当前对话）」按钮开新对话后重试。"
+                            "请点左侧栏「🆕 新建会话」按钮开新对话后重试。"
                         )
                     else:
                         yield f"\n\n⚠️ **[{code}]** {detail}"
@@ -132,29 +179,116 @@ def _stream_tokens_and_collect(
         st.session_state["chat_last_citations"] = citations
 
 
-for m in st.session_state["chat_messages"]:
-    with st.chat_message(m["role"]):
-        st.markdown(m["content"])
-        for tc in m.get("tool_calls", []) or []:
-            args_repr = json.dumps(tc.get("args", {}), ensure_ascii=False)
-            st.caption(f"🔧 `{tc.get('name')}` {args_repr}")
-        for c in m.get("citations", []) or []:
-            label = c.get("title") or c.get("paper_id", "?")
-            url = c.get("url", "")
-            st.caption(f"📄 [{label}]({url})")
-
+# ---- Sidebar: 历史会话列表 + 当前会话 ----
 with st.sidebar:
-    st.subheader("会话")
+    st.subheader("📚 历史会话")
+    code, sess_data = _api_get("/api/v1/chat/sessions")
+    items: list[dict[str, Any]] = sess_data.get("items", []) if isinstance(sess_data, dict) else []
+    if not items:
+        st.caption("（无历史会话）")
+    else:
+        st.caption(f"共 {len(items)} 条")
+        for s in items:
+            tid = str(s.get("thread_id") or "")
+            if not tid:
+                continue
+            trigger = s.get("trigger", "chat")
+            last_active = str(s.get("last_active_at") or "")[:16].replace("T", " ")
+            msg_count = s.get("message_count", 0)
+            topics = s.get("topics") or []
+            topic_str = ", ".join(topics) if topics else f"{trigger}"
+            display_label = f"{topic_str} · {last_active} ({msg_count})"
+            current = st.session_state.get("chat_session_id") == tid
+            btn_label = f"▶ {display_label}" if current else display_label
+            cols = st.columns([5, 1])
+            if cols[0].button(btn_label, key=f"sess_{tid}", use_container_width=True):
+                _load_session_messages(tid)
+                st.rerun()
+            confirm_tid = st.session_state.get("delete_confirm_tid")
+            if confirm_tid == tid:
+                if cols[1].button("⚠️", key=f"del_confirm_{tid}", help="再点确认删除"):
+                    dcode, _ = _api_delete(f"/api/v1/sessions/{tid}")
+                    if dcode in (200, 204):
+                        if st.session_state.get("chat_session_id") == tid:
+                            st.session_state["chat_session_id"] = None
+                            st.session_state["chat_messages"] = []
+                        st.toast(f"已删除 {tid[:12]}…")
+                    else:
+                        st.toast(f"删除失败 HTTP {dcode}")
+                    st.session_state["delete_confirm_tid"] = None
+                    st.rerun()
+            else:
+                if cols[1].button("🗑", key=f"del_{tid}", help="点 1 次预删，再点确认"):
+                    st.session_state["delete_confirm_tid"] = tid
+                    st.rerun()
+
+    st.divider()
+    st.subheader("当前会话")
     sid = st.session_state.get("chat_session_id")
     if sid:
         st.code(sid, language=None)
     else:
-        st.write("（未开始）")
-    if st.button("🗑 新建会话（清当前对话）"):
+        st.caption("（新会话；发消息后自动分配 thread_id）")
+    if st.button("🆕 新建会话", use_container_width=True):
         st.session_state["chat_session_id"] = None
         st.session_state["chat_messages"] = []
+        st.session_state["delete_confirm_tid"] = None
         st.rerun()
 
+
+# ---- 首次 load 自动恢复最近一个历史会话（owner 第 8 条字面要求） ----
+if (
+    not st.session_state["history_loaded_once"]
+    and st.session_state.get("chat_session_id") is None
+    and items
+):
+    _load_session_messages(items[0]["thread_id"])
+    st.session_state["history_loaded_once"] = True
+    st.rerun()
+
+
+def _render_message_blocks(content: Any) -> None:
+    """统一渲染 str / list of Anthropic content blocks。"""
+    if isinstance(content, str) and content.strip():
+        st.markdown(content)
+    elif isinstance(content, list):
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                txt = str(block.get("text", "") or "")
+                if txt:
+                    st.markdown(txt)
+
+
+# ---- 渲染当前会话所有 messages（含 historical user/assistant/tool） ----
+for m in st.session_state["chat_messages"]:
+    role = m.get("role")
+    if role == "user":
+        with st.chat_message("user"):
+            _render_message_blocks(m.get("content"))
+    elif role == "assistant":
+        with st.chat_message("assistant"):
+            _render_message_blocks(m.get("content"))
+            for tc in m.get("tool_calls") or []:
+                args_repr = json.dumps(tc.get("args", {}), ensure_ascii=False)
+                st.caption(f"🔧 `{tc.get('name')}` {args_repr}")
+            for c in m.get("citations") or []:
+                label = c.get("title") or c.get("paper_id", "?")
+                url = c.get("url", "")
+                st.caption(f"📄 [{label}]({url})")
+    elif role == "tool":
+        with (
+            st.chat_message("assistant"),
+            st.expander(f"🛠 工具返回 `{m.get('name', '?')}`", expanded=False),
+        ):
+            content = m.get("content")
+            if isinstance(content, str):
+                preview = content[:1500] + ("…" if len(content) > 1500 else "")
+                st.code(preview, language="json")
+            else:
+                st.json(content)
+
+
+# ---- 用户输入 + 流式回复 ----
 prompt = st.chat_input("发消息……")
 if prompt:
     st.session_state["chat_messages"].append({"role": "user", "content": prompt})

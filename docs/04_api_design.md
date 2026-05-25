@@ -296,6 +296,59 @@ data: {"finish_reason":"stop","token_usage":{"input":1500,"output":42,"model":"c
 
 > `related_papers` / `topics` 来自 session md frontmatter。`citations` 由该轮 `tool_calls` 里的 `read_file` 路径解析得到（无引用关联表）。消息 `id` 为 LangGraph 内部消息标识，仅用于前端 key。
 
+### 5.4 GET /api/v1/chat/sessions（M4 PR-2 Bug 2 新增）
+
+列所有 chat / daily-push 历史会话（扫 `./memory/sessions/` md frontmatter）。
+**新端点**，不复用 §5.1 既有 `/sessions`（避免改 M3 schema 触发推送 tab 回归）。
+
+**Response 200**：
+
+```json
+{
+  "items": [
+    {
+      "thread_id": "abc-uuid",
+      "trigger": "chat",
+      "started_at": "2026-05-25T14:30:00+08:00",
+      "last_active_at": "2026-05-25T15:42:11+08:00",
+      "message_count": 8,
+      "topics": [],
+      "related_papers": ["openalex-w7161571770"],
+      "md_path": "/app/memory/sessions/2026-05-25/14-30-chat.md"
+    }
+  ],
+  "total": 1
+}
+```
+
+按 `last_active_at desc` 排序。前端启动 / 刷新页面时拉此列表填侧栏，让用户切换历史。
+
+### 5.5 GET /api/v1/chat/sessions/{thread_id}/messages（M4 PR-2 Bug 2 新增）
+
+从 LangGraph PG checkpoint 读该 thread 历史 messages，保留全部 tool_calls /
+ToolMessage（PR-2 落地细节 1 字面要求，让前端切回历史会话能看到 agent 调过的
+工具与命中文献）。daily-push thread_id 也可访问。
+
+**Response 200**：
+
+```json
+{
+  "thread_id": "abc-uuid",
+  "messages": [
+    {"id": "...", "role": "user", "content": "硫化物固态电解质有哪些"},
+    {
+      "id": "...", "role": "assistant", "content": "...",
+      "tool_calls": [{"name": "search_memory_tool", "args": {"query": "sulfide", "scope": "papers"}, "id": "tooluse_..."}],
+      "token_usage": {"input": 1500, "output": 42}
+    },
+    {"id": "...", "role": "tool", "name": "search_memory_tool", "tool_call_id": "tooluse_...", "content": "[{\"path\":...,\"snippet\":...}]"}
+  ],
+  "total": 3
+}
+```
+
+无 checkpoint（thread 不存在 / 刚被清）→ `messages=[]`；前端按空会话处理。
+
 ### 5.3 DELETE /api/v1/sessions/{session_id}
 
 硬删除会话（M4 §6 Q8 owner 拍板，最终一致 + 先 md 后 PG）：
