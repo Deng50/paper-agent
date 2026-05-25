@@ -20,7 +20,6 @@ agent 调一次拿干净 Top N，不参与任何 for 循环。
 
 from __future__ import annotations
 
-import contextvars
 import datetime as dt
 from pathlib import Path
 
@@ -35,14 +34,6 @@ from lit_agent.tools.scoring import score_papers
 _log = structlog.get_logger("search_papers")
 
 TOP_N_CAP = 10  # 每次精选上限（PRD「5–10 篇」）
-
-# Force rerun scope（deterministic，不依赖 LLM prompt）：
-# jobs.py force=True 时在 task scope 内 set True；search_papers_tool 读此 var
-# 决定 dedup_against_memory，PEP 567 async context 透传到 LangGraph tool node。
-# 默认 False = M3 既有 idempotent 行为；reset via token 防泄漏。
-FORCE_RERUN_DEDUP: contextvars.ContextVar[bool] = contextvars.ContextVar(
-    "lit_agent.force_rerun_dedup", default=False
-)
 
 
 def _dedup_in_batch(papers: list[Paper]) -> list[Paper]:

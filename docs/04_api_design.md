@@ -462,12 +462,15 @@ data: {"finish_reason":"stop","token_usage":{"input":1500,"output":42,"model":"c
 | `run_date` | 推送日期；缺省为今天 |
 | `force` | `true` 时即使当天已推送也强制重跑（见下方语义） |
 
-**`force=true` 语义**（owner 拍方案 A，PR-1 落地）：
+**`force=true` 语义**（owner 拍方案 B，PR-1.1 修订；方案 A "绕过 dedup" 路径已撤销，
+理由：方案 A 下相同 query+score 必出近 100% 重叠 top 10，反而让 force 看起来没生效）：
 
 1. **清同 thread checkpoint**：`AsyncPostgresSaver.adelete_thread(thread_id)` 删 LangGraph 三张自管表的同 `daily_push:YYYY-MM-DD` 行，破 handover §3.9「同 thread 复用 ToolMessage」屏障，强制 agent 重新调 `search_papers`（不直接复用上次结果）
-2. **绕过历史去重**：`search_papers_tool` 内部读 `FORCE_RERUN_DEDUP` ContextVar（PEP 567 async 透传到 LangGraph tool node），force=True 时传 `dedup_against_memory=False`，允许 4 源命中已存 paper_id；deterministic，不依赖 LLM 解析 kickoff prompt
-3. **不重写已存 paper.md**：`search_papers.py` 落盘前 `if path.exists(): continue`，保留原内容（含 arxiv v2 → v3 也不覆盖；owner 若要拉新版本须**手动 `rm` 该 paper.md** 再触发 force）；log `search_papers_skip_existing_md`
+2. **保留历史去重**：`search_papers_tool` 默认走 `dedup_against_memory=True`，`load_dedup_index` 扣掉 `./memory/papers/` 整树已存 paper_id，让 search 只返回**真正未推过的新候选**；这才是 owner "force 拉新文献" 的真实意图
+3. **不重写已存 paper.md**（防御性安全网）：`search_papers.py` 落盘前 `if path.exists(): continue`，保留原内容；步骤 2 历史去重生效时理论上不触发，留作 fallback；log `search_papers_skip_existing_md`
 4. **覆盖 PG pushes 行**：`_claim_run(force=True)` 让 `success` 状态行 reset 到 `running`，跑完写回新 `selected_count` / `selected_papers` / `email_sent`（原行被覆盖，**不新建行**）
+
+**预期行为 + 边界**：force=True 后若当天 4 源没足够新 publish（owner 已多次推过 5/25 时即此情况），`search_papers_done deduped` 会变 0 或几个，`selected_count` 可能小于 10 或为 0 —— **如实报"今日无新候选"** 而不是凑数推旧的；这是方案 B 的设计取舍（force 不绕过去重，所以也不会假装拉新）。
 
 **Response 202**：
 

@@ -31,7 +31,6 @@ from lit_agent.core.config import Settings, get_settings
 from lit_agent.db.base import get_session_factory
 from lit_agent.db.models import Push
 from lit_agent.tools.mail import render_daily_push, send_email
-from lit_agent.tools.search_papers import FORCE_RERUN_DEDUP
 
 _log = structlog.get_logger("daily_push")
 
@@ -181,27 +180,20 @@ async def run_daily_push(
     try:
         async with AsyncPostgresSaver.from_conn_string(settings.psycopg_dsn) as saver:
             # force=True 时清同 thread_id checkpoint，破 handover §3.9 复用屏障，
-            # 强制 agent 重搜（不直接复用上次 ToolMessage 里的 papers）。
+            # 让 agent 重新调 search_papers（保留 dedup_against_memory=True 历史去重，
+            # 让 search 只返回真正未推过的新候选；docs/04 §8.1 方案 B 字面）。
             if force:
                 await saver.adelete_thread(thread_id)
                 _log.info("daily_push_force_clear_checkpoint", thread_id=thread_id)
             agent = build_lit_agent(checkpointer=saver, settings=settings)
-            kickoff = f"今天是 {run_date.isoformat()}，执行每日推送。"
-            if force:
-                kickoff += (
-                    "（force_rerun=True：允许重复推送已有论文；search_papers_tool 内部"
-                    "已自动 dedup=False，但不会重写已存 paper.md 文件。）"
-                )
-            # ContextVar 主路径（deterministic，PEP 567 async 透传到 tool node）；
-            # kickoff prompt 字面注释作辅助说明（双保险但不依赖 LLM 解析）。
-            token = FORCE_RERUN_DEDUP.set(force)
-            try:
-                result = await agent.ainvoke(
-                    {"messages": [HumanMessage(content=kickoff)]},
-                    config={"configurable": {"thread_id": thread_id}},
-                )
-            finally:
-                FORCE_RERUN_DEDUP.reset(token)
+            result = await agent.ainvoke(
+                {
+                    "messages": [
+                        HumanMessage(content=f"今天是 {run_date.isoformat()}，执行每日推送。")
+                    ]
+                },
+                config={"configurable": {"thread_id": thread_id}},
+            )
         extracted = _extract(result)
         papers = extracted["papers"]
         if papers:
