@@ -115,7 +115,15 @@ def _stream_tokens_and_collect(
                 elif event == "done":
                     token_usage = data.get("token_usage", {}) or {}
                 elif event == "error":
-                    yield f"\n[error] {data.get('detail', '?')}"
+                    code = str(data.get("code") or "ERROR")
+                    detail = str(data.get("detail") or "?")
+                    if code == "DANGLING_TOOL_CALL":
+                        yield (
+                            "\n\n⚠️ **会话历史中断**：上一轮工具调用未完成。\n\n"
+                            "请点左侧栏「🗑 新建会话（清当前对话）」按钮开新对话后重试。"
+                        )
+                    else:
+                        yield f"\n\n⚠️ **[{code}]** {detail}"
     except httpx.HTTPError as exc:
         yield f"\n[network] {exc}"
     finally:

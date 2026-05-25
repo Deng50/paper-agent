@@ -71,6 +71,19 @@ def _parse_paper_md_citation(content: str) -> dict[str, str] | None:
     }
 
 
+def _last_msg_has_dangling_tool_calls(messages: list[BaseMessage]) -> bool:
+    """最后一条是含 tool_calls 的 AIMessage（无对应 ToolMessage）→ dangling。
+
+    成因：上一轮 chat 在 tool node 中途被 cancel（client disconnect / 超时 /
+    异常），LangGraph 已 commit AIMessage 但 ToolMessage 未生成 → 同 thread
+    续问时 LLM provider 报 INVALID_CHAT_HISTORY。
+    """
+    if not messages:
+        return False
+    last = messages[-1]
+    return isinstance(last, AIMessage) and bool(last.tool_calls)
+
+
 async def _produce_events(
     agent: Any,
     config: dict[str, Any],
@@ -82,6 +95,23 @@ async def _produce_events(
     """跑 agent.astream + 解析 events 入队 SSE。完毕 / 异常时 put None 哨兵。"""
     try:
         await queue.put(format_sse_event("meta", {"session_id": session_id, "trace_id": trace_id}))
+
+        snap = await agent.aget_state(config)
+        prior_msgs = snap.values.get("messages", []) if snap and snap.values else []
+        if _last_msg_has_dangling_tool_calls(prior_msgs):
+            await queue.put(
+                format_sse_event(
+                    "error",
+                    {
+                        "code": "DANGLING_TOOL_CALL",
+                        "detail": (
+                            "上轮工具调用未完成（会话历史不一致）。"
+                            "请点侧栏「🗑 新建会话（清当前对话）」开新对话后重试。"
+                        ),
+                    },
+                )
+            )
+            return
 
         seen_msg_ids: set[str] = set()
         token_usage = {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0}
