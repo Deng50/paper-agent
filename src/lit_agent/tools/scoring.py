@@ -67,10 +67,11 @@ def _candidates_block(papers: list[Paper]) -> str:
 async def _score_batch(
     client: AsyncAnthropic, papers: list[Paper], profile_summary: str
 ) -> dict[str, tuple[float, str]]:
-    user = (
-        f"用户画像摘要：\n{profile_summary.strip() or '（暂无画像，按宽泛领域相关性判断）'}\n\n"
-        f"候选论文（共 {len(papers)} 篇）：\n\n{_candidates_block(papers)}"
-    )
+    # M5 决策 A2：profile_summary 已由 search_papers._read_profile_summary 渲染为
+    # 「偏好关键词 / 请避开 / 画像摘要」三段中文上下文（含 negative_keywords）。
+    # scoring system prompt 已告诉 Haiku「按画像打分」；prefix 简化避免重复修饰。
+    profile_block = profile_summary.strip() or "用户画像：（暂无画像，按宽泛领域相关性判断）"
+    user = f"{profile_block}\n\n候选论文（共 {len(papers)} 篇）：\n\n{_candidates_block(papers)}"
     # NOTE: tool 的 input_schema 是 Pydantic 动态生成的 dict[str, Any]，运行时符合 anthropic
     # tool_use 规范，但 mypy 无法对动态 schema 做重载匹配，故忽略 call-overload。
     resp = await client.messages.create(  # type: ignore[call-overload]

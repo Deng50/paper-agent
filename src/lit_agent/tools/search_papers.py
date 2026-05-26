@@ -22,8 +22,10 @@ from __future__ import annotations
 
 import datetime as dt
 from pathlib import Path
+from typing import Any
 
 import structlog
+import yaml
 
 from lit_agent.core.config import Settings, get_settings
 from lit_agent.tools import sources
@@ -60,16 +62,50 @@ def _dedup_in_batch(papers: list[Paper]) -> list[Paper]:
 
 
 def _read_profile_summary(memory_dir: Path) -> str:
-    """读 profile.md 正文（frontmatter 之后）作为评分上下文。缺失返回空串。"""
+    """读 profile.md → 渲染成给 scoring prompt 注入的中文上下文。缺失返回空串。
+
+    M5 决策 A2 起 frontmatter 含 keyword_weights / negative_keywords，渲染为：
+
+        偏好关键词：argyrodite (+0.80), PVDF (+0.60)
+        请避开（用户明示）：液态添加剂, 钠电池
+        画像摘要：
+        ...正文...
+
+    缺失字段优雅降级（yaml 解析失败 / 字段不存在 → 静默跳过该段）。
+    M3/M4 旧 profile.md 仅有 keyword_weights / 无 negative_keywords → 第二段不出现。
+    """
     path = memory_dir / "profile" / "profile.md"
     if not path.is_file():
         return ""
     text = path.read_text(encoding="utf-8", errors="replace")
+
+    frontmatter_str = ""
+    body = text
     if text.startswith("---"):
         parts = text.split("---", 2)
         if len(parts) == 3:
-            return parts[2].strip()
-    return text.strip()
+            frontmatter_str = parts[1]
+            body = parts[2].strip()
+
+    sections: list[str] = []
+    if frontmatter_str:
+        try:
+            fm: dict[str, Any] = yaml.safe_load(frontmatter_str) or {}
+        except yaml.YAMLError:
+            fm = {}
+        kw = fm.get("keyword_weights") or {}
+        neg = fm.get("negative_keywords") or []
+        if isinstance(kw, dict) and kw:
+            kw_str = ", ".join(
+                f"{k} ({v:+.2f})" if isinstance(v, int | float) else str(k) for k, v in kw.items()
+            )
+            sections.append(f"偏好关键词：{kw_str}")
+        if isinstance(neg, list) and neg:
+            sections.append(f"请避开（用户明示）：{', '.join(str(n) for n in neg)}")
+    if body:
+        sections.append(f"画像摘要：\n{body}")
+
+    return "\n\n".join(sections)
 
 
 async def search_papers(

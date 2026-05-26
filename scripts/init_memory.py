@@ -19,6 +19,7 @@ PROFILE_PLACEHOLDER = """\
 ---
 updated_at: 1970-01-01T00:00:00+08:00
 keyword_weights: {}
+negative_keywords: []
 seed_queries:
   - "lithium battery solid electrolyte"
   - "battery thermal management"
@@ -26,7 +27,7 @@ seed_queries:
 
 ## 画像摘要
 （占位）尚无足够反馈。每日推送先用 seed_queries 兜底，反馈累积后由
-profile_update.skill.md 增量改写本文件（M5）。
+profile_update.skill.md 增量改写 keyword_weights / negative_keywords（M5 P1 ⑤ / 决策 A5）。
 """
 
 # skill 占位：先建文件结构，正式内容在对应里程碑填充（不在 M1 写死行为）。
