@@ -22,6 +22,7 @@ import json
 import re
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import structlog
 import yaml
@@ -44,10 +45,19 @@ def session_md_path(
     started_at: dt.datetime,
     settings: Settings | None = None,
 ) -> Path:
-    """计算 session md 路径：./memory/sessions/{date}/{HH-MM}-{trigger}.md。"""
+    """计算 session md 路径：./memory/sessions/{date}/{HH-MM}-{trigger}.md。
+
+    日期 / HH-MM 用 `settings.timezone`（默认 Asia/Shanghai）；M5 修复前用 UTC
+    导致北京 15:20 文件名变 07-20-chat.md（差 8 小时）。tz-aware 输入 → astimezone
+    转本地；naive 输入 → 视作已是本地时间（向后兼容老 fixture）。
+    """
     settings = settings or get_settings()
-    date_str = started_at.date().isoformat()
-    hm_str = started_at.strftime("%H-%M")
+    if started_at.tzinfo is not None:
+        local = started_at.astimezone(ZoneInfo(settings.timezone))
+    else:
+        local = started_at
+    date_str = local.date().isoformat()
+    hm_str = local.strftime("%H-%M")
     trig = trigger_of(thread_id)
     return settings.memory_dir / "sessions" / date_str / f"{hm_str}-{trig}.md"
 
@@ -196,13 +206,16 @@ def derive_session_md(
     """
     settings = settings or get_settings()
     now = now or dt.datetime.now(dt.UTC)
+    # M5 时区 fix：路径 + frontmatter 时间戳全用本地（Asia/Shanghai）。修前用 UTC
+    # 直接 isoformat 出 '...+00:00'，与文件名 HH-MM 配合让北京 15:20 名为 07-20。
+    now_local = now.astimezone(ZoneInfo(settings.timezone)) if now.tzinfo else now
 
     total = len(messages)
     if total == 0:
         return None
 
     existing_path = find_existing_by_thread(thread_id, settings)
-    md_path = existing_path or session_md_path(thread_id, now, settings=settings)
+    md_path = existing_path or session_md_path(thread_id, now_local, settings=settings)
 
     fm, body = _parse_existing(md_path)
     prev_count = int(fm.get("message_count", 0) or 0)
@@ -214,8 +227,8 @@ def derive_session_md(
     if not fm.get("started_at"):
         fm["thread_id"] = thread_id
         fm["trigger"] = trigger_of(thread_id)
-        fm["started_at"] = now.isoformat()
-    fm["last_active_at"] = now.isoformat()
+        fm["started_at"] = now_local.isoformat()
+    fm["last_active_at"] = now_local.isoformat()
     fm["message_count"] = total
 
     if total % 5 == 0 or "related_papers" not in fm:
