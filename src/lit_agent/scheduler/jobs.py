@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+from collections import defaultdict
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -29,8 +30,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from lit_agent.agents.lit_agent import build_lit_agent
 from lit_agent.core.config import Settings, get_settings
 from lit_agent.db.base import get_session_factory
-from lit_agent.db.models import Push
+from lit_agent.db.models import Feedback, Push
 from lit_agent.tools.mail import render_daily_push, send_email
+from lit_agent.tools.paper_md import atomic_write
 
 _log = structlog.get_logger("daily_push")
 
@@ -233,8 +235,59 @@ async def run_daily_push(
     return status
 
 
+def _format_feedback_log_lines(rows: list[Feedback], tz: ZoneInfo) -> dict[dt.date, list[str]]:
+    """纯函数：feedback 行按本地日期 group + 格式化成 log 行。便于无 PG 单测。
+
+    每行格式（profile_update.skill.md 解析依据）：
+        2026-05-27T10:23:45+08:00 | up | s2-abc123 | +1.00
+    """
+    by_date: dict[dt.date, list[str]] = defaultdict(list)
+    for r in rows:
+        local_dt = r.created_at.astimezone(tz)
+        line = f"{local_dt.isoformat()} | {r.signal_type} | {r.paper_id} | {float(r.weight):+.2f}"
+        by_date[local_dt.date()].append(line)
+    return by_date
+
+
+async def derive_feedback_logs(
+    days: int = 30,
+    *,
+    settings: Settings | None = None,
+    session_factory: async_sessionmaker[AsyncSession] | None = None,
+) -> int:
+    """PG feedback → 文件派生（M5 决策 A4 / cron 03:00 主路径）。
+
+    读近 `days` 天的 feedback 行 → `_format_feedback_log_lines` 按本地日期 group →
+    每个日期 atomic_write 到 `./memory/feedback/{YYYY-MM-DD}.log`，
+    **全量覆盖单日文件**（每行 1 条反馈）。
+
+    返回写入文件数（无 feedback 返回 0；不删除窗口外旧文件，由 skill 自截 30 天）。
+    """
+    settings = settings or get_settings()
+    factory = session_factory or get_session_factory()
+    cutoff = dt.datetime.now(dt.UTC) - dt.timedelta(days=days)
+    tz = ZoneInfo(settings.timezone)
+
+    async with factory() as s:
+        result = await s.execute(
+            select(Feedback).where(Feedback.created_at >= cutoff).order_by(Feedback.created_at)
+        )
+        rows = list(result.scalars().all())
+
+    by_date = _format_feedback_log_lines(rows, tz)
+
+    feedback_dir = settings.memory_dir / "feedback"
+    feedback_dir.mkdir(parents=True, exist_ok=True)
+    for date, lines in by_date.items():
+        path = feedback_dir / f"{date.isoformat()}.log"
+        atomic_write(path, "\n".join(lines) + "\n")
+
+    _log.info("feedback_derived", days=days, rows=len(rows), files=len(by_date))
+    return len(by_date)
+
+
 def create_scheduler(settings: Settings | None = None) -> AsyncIOScheduler:
-    """同进程 AsyncIOScheduler（memory jobstore）+ 10:00/11:00 双 cron。"""
+    """同进程 AsyncIOScheduler（memory jobstore）+ daily-push 双 cron + M5 feedback 派生 cron。"""
     settings = settings or get_settings()
     scheduler = AsyncIOScheduler(timezone=settings.timezone)
     scheduler.add_job(
@@ -253,6 +306,16 @@ def create_scheduler(settings: Settings | None = None) -> AsyncIOScheduler:
         minute=0,
         kwargs={"triggered_by": "retry"},
         id="daily_push_retry",
+        replace_existing=True,
+    )
+    # M5 决策 A4：03:00 cron 派生 PG feedback → ./memory/feedback/{date}.log，
+    # 为 11:30 profile_update cron（C6）提供数据源。03:00 取错峰时段，与 daily-push 互不踩。
+    scheduler.add_job(
+        derive_feedback_logs,
+        "cron",
+        hour=3,
+        minute=0,
+        id="feedback_derive",
         replace_existing=True,
     )
     return scheduler
