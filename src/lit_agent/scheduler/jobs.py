@@ -240,15 +240,16 @@ async def run_profile_update(
     settings: Settings | None = None,
     session_factory: async_sessionmaker[AsyncSession] | None = None,
 ) -> str:
-    """每日 11:30 cron 触发 lit_agent 按 profile_update.skill.md 增量改写画像（M5 A1）。
+    """每日 23:00 cron 触发 lit_agent 按 profile_update.skill.md 增量改写画像（M5 A1）。
 
     流程（不在本函数；本函数只发动）：
     - build_lit_agent(skills=("profile_update",)) → 拼写权 override prompt + 加 write_file_tool
     - HumanMessage 发动 → agent 按 skill 7 步流程 read profile.md → list feedback/ →
       读 30 天反馈 + 对照 paper.md 抽关键词 → 增量改写 → write_file 1 次原子写
 
-    错峰逻辑：daily-push 10:00 cron → 11:00 retry cron → 11:30 本 cron，三段不踩。
-    feedback 派生 cron 03:00 已先落盘日志，确保本 11:30 有 fresh 数据可读。
+    时机：22:55 feedback derive 落今天全天反馈 → 23:00 进画像 → 明早 10:00 push
+    用新画像。延迟约 11 小时（旧 11:30 设计 25 小时），且 23:00 服务器空闲、
+    Anthropic API 便宜稳定（owner 调整理由）。
 
     thread_id：每次新会话（profile_update:{date}），用 adelete_thread 强清，
     不复用上次 state。返回 success / "failed: {err}"。
@@ -358,23 +359,30 @@ def create_scheduler(settings: Settings | None = None) -> AsyncIOScheduler:
         id="daily_push_retry",
         replace_existing=True,
     )
-    # M5 决策 A4：03:00 cron 派生 PG feedback → ./memory/feedback/{date}.log，
-    # 为 11:30 profile_update cron 提供数据源。03:00 取错峰时段，与 daily-push 互不踩。
+    # M5 决策 A4：22:55 cron 派生 PG feedback → ./memory/feedback/{date}.log。
+    # owner 调整：profile-update 从 11:30 挪到 23:00（见下方），feedback derive 必须
+    # 在 23:00 之前跑才能让「今天全天反馈进当晚画像」成立；故 22:55（紧邻 23:00 之前）。
     scheduler.add_job(
         derive_feedback_logs,
         "cron",
-        hour=3,
-        minute=0,
+        hour=22,
+        minute=55,
         id="feedback_derive",
         replace_existing=True,
     )
-    # M5 决策 A1：11:30 cron 触发 lit_agent(skills=("profile_update",)) 按 skill 增量改写
-    # profile.md。错峰：daily-push 10:00 → retry 11:00 → profile-update 11:30。
+    # M5 决策 A1（owner 调整后）：23:00 cron 触发 lit_agent(skills=("profile_update",))
+    # 按 skill 增量改写 profile.md。
+    # 时机选择理由：
+    #   - 11:30 旧设计：今天 10:00 push 用昨天画像；今天反馈要等明天 11:30 才进画像
+    #     → 反馈到生效 25 小时延迟
+    #   - 23:00 新设计：今天全天反馈 22:55 落 log → 23:00 进画像 → 明早 10:00 push
+    #     直接用新画像 → 延迟缩到 11 小时
+    #   - 23:00 服务器空闲、Anthropic API 便宜稳定
     scheduler.add_job(
         run_profile_update,
         "cron",
-        hour=11,
-        minute=30,
+        hour=23,
+        minute=0,
         id="profile_update",
         replace_existing=True,
     )

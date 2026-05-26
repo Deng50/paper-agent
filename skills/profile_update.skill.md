@@ -2,17 +2,19 @@
 name: profile_update
 status: active
 milestone: M5
-trigger: daily cron 11:30（Asia/Shanghai）
+trigger: daily cron 23:00（Asia/Shanghai）
 ---
 
 # profile_update
 
-每日 cron 11:30 触发后，按本 skill **增量改写** `./memory/profile/profile.md` 的偏好画像。
+每日 cron 23:00 触发后，按本 skill **增量改写** `./memory/profile/profile.md` 的偏好画像。
 
 ## 任务背景
 
-- 触发：scheduler/jobs.py 在每天 11:30 拼 HumanMessage「执行画像增量更新」并叫醒 lit_agent
-- 输入数据源：`./memory/feedback/{YYYY-MM-DD}.log`（PG → 文件派生，03:00 cron 已落盘）
+- 触发：scheduler/jobs.py 在每天 23:00 拼 HumanMessage「执行画像增量更新」并叫醒 lit_agent
+- 时机理由：22:55 feedback derive 落今天全天反馈 → 23:00 进画像 → 明早 10:00 push
+  用新画像（owner 调整后的 ~11 小时延迟链路；旧 11:30 设计是 25 小时）
+- 输入数据源：`./memory/feedback/{YYYY-MM-DD}.log`（PG → 文件派生，22:55 cron 已落盘）
 - 输出：原子写一次 `./memory/profile/profile.md`，**仅更新 3 个字段**：
   - `keyword_weights`（dict，正向偏好权重）
   - `negative_keywords`（list，用户明示「少推」的主题词）

@@ -91,16 +91,36 @@ def test_run_profile_update_failure_returns_failed(monkeypatch: pytest.MonkeyPat
     assert "agent boom" in result
 
 
-def test_scheduler_registers_profile_update_cron() -> None:
-    """A1：create_scheduler 在 11:30 hour=11/minute=30 注册 profile_update job。"""
+def test_scheduler_registers_profile_update_cron_at_23_00() -> None:
+    """A1（owner 调整后）：create_scheduler 注册 profile_update 在 hour=23/minute=0。
+
+    时机理由：11:30 旧设计反馈到生效 25h 延迟；23:00 新设计 ~11h 延迟（22:55 feedback
+    derive 抓今天全天反馈 → 23:00 进画像 → 明早 10:00 push 用新画像）。
+    """
     scheduler = jobs.create_scheduler()
     try:
         job = scheduler.get_job("profile_update")
         assert job is not None
-        # APScheduler CronTrigger 字段
         trigger = job.trigger
         fields = {f.name: str(f) for f in trigger.fields}
-        assert fields.get("hour") == "11"
-        assert fields.get("minute") == "30"
+        assert fields.get("hour") == "23"
+        assert fields.get("minute") == "0"
+    finally:
+        scheduler.shutdown(wait=False) if scheduler.running else None
+
+
+def test_scheduler_registers_feedback_derive_at_22_55() -> None:
+    """A4（owner 调整后）：feedback derive 从 03:00 挪到 22:55，紧邻 23:00 profile-update。
+
+    必须早于 23:00 让「今天全天反馈进当晚画像」成立；22:55 给 5 分钟缓冲。
+    """
+    scheduler = jobs.create_scheduler()
+    try:
+        job = scheduler.get_job("feedback_derive")
+        assert job is not None
+        trigger = job.trigger
+        fields = {f.name: str(f) for f in trigger.fields}
+        assert fields.get("hour") == "22"
+        assert fields.get("minute") == "55"
     finally:
         scheduler.shutdown(wait=False) if scheduler.running else None
