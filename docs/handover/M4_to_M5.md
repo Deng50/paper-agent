@@ -55,6 +55,13 @@ e3a29a0 docs(M4): 消歧义 session md 派生写 + skill 拼入时序脚注
 - `test_m4_chat_sessions.py`：6 用例（列表排序 / 跳过坏 md / 空目录 / 保留 tool_calls / 空 thread / 鉴权）
 - **baseline 1 个 fail**：`test_m3_mail.py::test_send_email_no_recipient_fail_fast`（M3 既有 P1，env isolation 缺陷，见 §5 P1）
 
+### M4 末态门禁 baseline（M5 P1 启动前的对比基准）
+
+- **`ruff check .`**：0 errors（M5 P1 把 vendor/paper-search-mcp/ 加入 `pyproject.toml [tool.ruff] extend-exclude` 后；vendored 上游包按 CLAUDE.md §4「锁版本不动」精神不扫，此前 524 errors 全在 vendor）
+- **`ruff format --check .`**：0 reformat（同上，此前 53 文件 reformat 全在 vendor）
+- **`mypy src`**：Success no issues found in 34 source files
+- **Windows 本机全套 pytest**：starlette TestClient + anyio blocking_portal 触发 native crash，无法出 summary；改用「定向验证」策略 = 改动相关文件 pytest，详见 [docs/known_issues/windows_starlette_testclient.md](../known_issues/windows_starlette_testclient.md) Bill 1
+
 ---
 
 ## 3. M4 累积的「已拍板决策」（不要再争）

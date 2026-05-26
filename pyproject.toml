@@ -62,6 +62,8 @@ package = true
 line-length = 100
 target-version = "py312"
 src = ["src", "tests", "scripts"]
+# vendored 上游包按 CLAUDE.md §4 锁版本不动，质量门禁不扫；用 extend-exclude 不覆盖 ruff 默认排除。
+extend-exclude = ["vendor"]
 
 [tool.ruff.lint]
 # E/F pyflakes+pycodestyle, I import-sort, UP pyupgrade, B bugbear, SIM simplify
