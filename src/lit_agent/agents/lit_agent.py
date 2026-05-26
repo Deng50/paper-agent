@@ -145,6 +145,7 @@ def build_lit_agent(
         base_url=settings.anthropic_base_url or None,
         max_tokens=AGENT_MAX_TOKENS,
         timeout=90.0,
+        streaming=True,  # docs/02 §A.2:286 字面；chat.py:16 字符级流 stream_mode="messages" 的硬依赖
     )
     return create_react_agent(
         model=model,
