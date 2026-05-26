@@ -93,6 +93,19 @@ session_questions:
   # 注：session 题需 M4 chat 路由跑通累积真 chat 历史后由 owner 填具体 session_id
   # （session md 路径形如 ./memory/sessions/{date}/{HH-MM}-chat.md，basename 用作 id）
   # 占位 query 已写好，expected_session_ids 待 demo 后填
+  #
+  # ───── P1 ③ 实测决策（owner 拍板 Option 1，本轮留空 + 撂着） ─────
+  # 截 2026-05-26 的 chat 历史共 10 条（memory/sessions/2026-05-{25,26}/），
+  # mtime 降序 top 5 主题分布：
+  #   - AI/ML for batteries（DL/RL/ML 用于电池材料设计/BMS）：4 条
+  #   - 浏览推送元话题（"今天推送了什么"/摘要请求）：1 条
+  #   bottom 5 全是浏览推送元话题或寒暄。
+  # 与下方 A 硫化物 / B 锂金属 / D 聚合物 主题预设不匹配，无法凑出干净的
+  # ground truth（横跨 2 主题的会按 owner 护栏「排除」处理）。
+  #
+  # 本轮决策：expected_session_ids 全部留空 [] 不填，记账撂着。
+  # 后续路径：等 M5 画像自更新跑起来累积更针对性的 chat 历史后重评，
+  # 或在累积 ≥ 20 条 chat 后重新挑选。详见对应 git commit message。
 
   - id: session_A1
     theme: A_sulfide_solid_electrolyte
