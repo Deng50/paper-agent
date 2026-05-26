@@ -137,7 +137,9 @@
 | LangGraph 自管表（在 PG 内） | 当前对话 state / checkpoint | ✅ 框架自管，**我们不画不动不 overwrite** |
 | PG 3 表 `users`/`pushes`/`feedback` | 单用户配置 / 推送审计 / 反馈统计 | ✅ |
 
-- 文件工具路径白名单：`./memory/`（读写）、`skills/`（只读）。防越权读 `.env`。
+- 文件工具路径白名单：
+  - **读**：`./memory/`（读）、`skills/`（只读）。防越权读 `.env`。
+  - **agent 写（M5 起严收）**：仅 `^\./memory/profile/profile\.md$`（regex 字面同 `src/lit_agent/tools/memory.py::_WRITE_WHITELIST`）。越白名单 → `PathNotWhitelistedError`；越 memory → `PathNotAllowed`。基础设施代码（paper.md 落盘 / session md 派生）走 `paper_md.atomic_write` 直接绕过此白名单——白名单专管 agent。
 - 写 `profile.md` / session md 用**原子写**（临时文件 + `os.replace`），**不是锁**。
 
 ---

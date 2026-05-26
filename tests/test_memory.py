@@ -8,7 +8,7 @@ import pytest
 
 from lit_agent.core.config import Settings
 from lit_agent.tools import memory
-from lit_agent.tools.memory import PathNotAllowed
+from lit_agent.tools.memory import PathNotAllowed, PathNotWhitelistedError
 
 
 def _settings(tmp_path: Path) -> Settings:
@@ -19,20 +19,42 @@ def _settings(tmp_path: Path) -> Settings:
     return Settings(memory_dir=mem, skills_dir=skills)  # type: ignore[call-arg]
 
 
-def test_write_then_read_within_memory(tmp_path: Path) -> None:
+def test_write_profile_then_read(tmp_path: Path) -> None:
+    """M5 P1 ⑤：agent 写白名单仅 profile.md。"""
     s = _settings(tmp_path)
-    target = s.memory_dir / "papers" / "2026-05-22" / "arxiv-1.md"
+    target = s.memory_dir / "profile" / "profile.md"
+    target.parent.mkdir(parents=True)
     memory.write_file(target, "hello", settings=s)
     assert memory.read_file(target, settings=s) == "hello"
 
 
 def test_write_outside_memory_rejected(tmp_path: Path) -> None:
+    """越 memory 根 → PathNotAllowed（第 1 层 _resolve 兜底）。"""
     s = _settings(tmp_path)
     with pytest.raises(PathNotAllowed):
         memory.write_file(tmp_path / "evil.txt", "x", settings=s)
     # skills 只读：写入应被拒
     with pytest.raises(PathNotAllowed):
         memory.write_file(s.skills_dir / "x.md", "x", settings=s)
+
+
+def test_write_inside_memory_but_not_profile_rejected(tmp_path: Path) -> None:
+    """M5 P1 ⑤：memory 根内但非 profile.md → PathNotWhitelistedError。"""
+    s = _settings(tmp_path)
+    # papers 目录内的任何路径 / profile/ 下非 profile.md / 任意其他文件都该拒
+    bad_paths = [
+        s.memory_dir / "papers" / "2026-05-22" / "arxiv-1.md",
+        s.memory_dir / "profile" / "other.md",
+        s.memory_dir / "feedback" / "2026-05-26.log",
+        s.memory_dir / "rogue.txt",
+    ]
+    for p in bad_paths:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with pytest.raises(PathNotWhitelistedError):
+            memory.write_file(p, "x", settings=s)
+    # 子类校验：PathNotWhitelistedError 继承自 PathNotAllowed，旧 except 仍 catch
+    with pytest.raises(PathNotAllowed):
+        memory.write_file(s.memory_dir / "feedback" / "x.log", "x", settings=s)
 
 
 def test_path_traversal_blocked(tmp_path: Path) -> None:

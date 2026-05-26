@@ -3,12 +3,17 @@
 设计精神：记忆是 markdown 文件 + grep，不是数据库/向量库。MVP 用 Python 扫描
 （5 年 ≤ 2 万篇足够快；需要时再换 ripgrep / SQLite FTS5 派生索引）。
 
-安全（硬边界）：路径白名单 —— `./memory/`（读写）、`skills/`（只读）。
-任何越权路径（如 `.env`、`..` 穿越）抛 PathNotAllowed，防止 agent 读写敏感文件。
+安全（硬边界，两层）：
+- 读：路径白名单 `./memory/`（可读）、`skills/`（只读）。越权 → PathNotAllowed。
+- 写（M5 起严收）：agent 写白名单仅 `^\\./memory/profile/profile\\.md$`（M5 P1 ⑤
+  / 决策 A6）。越白名单但仍在 memory 内 → PathNotWhitelistedError；越 memory →
+  PathNotAllowed。基础设施代码（paper.md 落盘 / session md 派生）仍走 paper_md
+  .atomic_write 直接绕过此白名单 —— 白名单专管 agent。
 """
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Literal
 
@@ -21,9 +26,23 @@ _log = structlog.get_logger("memory")
 
 Scope = Literal["papers", "sessions", "profile", "feedback", "all"]
 
+# agent 写白名单（M5 P1 ⑤ / 决策 A6 owner 字面拍板）。
+# 三处字面同步：本常量 ↔ CLAUDE.md §5 ↔ docs/02 §3.4。
+# 注：常量是 agent 标准输入的 relative-path 字面参考；write_file 内部用 canonical
+# 绝对路径比对（更鲁棒），用 regex.pattern 仅作错误信息引用。
+_WRITE_WHITELIST = re.compile(r"^\./memory/profile/profile\.md$")
+
 
 class PathNotAllowed(Exception):
-    """目标路径越出白名单。"""
+    """目标路径越出读写根（memory / skills 之外）。"""
+
+
+class PathNotWhitelistedError(PathNotAllowed):
+    """目标路径在 memory 根内但不在 agent 写白名单（M5 起仅 profile.md）。
+
+    继承自 PathNotAllowed 以兼容现有 except 链；细分类便于 agent / 监控
+    把"白名单收紧拒写"与"越权路径"两类失败区分开来。
+    """
 
 
 def _read_roots(settings: Settings) -> list[Path]:
@@ -49,9 +68,21 @@ def read_file(path: str | Path, *, settings: Settings | None = None) -> str:
 
 
 def write_file(path: str | Path, content: str, *, settings: Settings | None = None) -> Path:
-    """原子写到 `./memory/` 内（skills/ 只读，不可写）。"""
+    """agent 写文件入口（M5 起严收）：原子写仅限 `./memory/profile/profile.md`。
+
+    两层校验：先 _resolve 校 memory root（PathNotAllowed），再校写白名单
+    （PathNotWhitelistedError，PathNotAllowed 子类便于兼容现有 except）。
+    白名单的「字面 regex」见 _WRITE_WHITELIST；本函数用 canonical 绝对路径比对，
+    更鲁棒（允许测试传 tmp_path 下的 memory/profile/profile.md 绝对 Path 通过）。
+    """
     settings = settings or get_settings()
-    p = _resolve(path, [settings.memory_dir.resolve()])  # 写仅限 memory
+    p = _resolve(path, [settings.memory_dir.resolve()])  # 第 1 层：memory root
+    canonical_profile = (settings.memory_dir / "profile" / "profile.md").resolve()
+    if p != canonical_profile:
+        raise PathNotWhitelistedError(
+            f"agent 写白名单仅 {_WRITE_WHITELIST.pattern}（canonical: {canonical_profile}）；"
+            f"收到: {path} → resolved: {p}"
+        )
     atomic_write(p, content)
     _log.info("write_file", path=str(p))
     return p

@@ -149,7 +149,9 @@ def atomic_write(path, content):
     tmp.replace(path)        # POSIX 原子操作
 ```
 
-不引入"分布式锁 / 全局锁"。文件工具路径限定 `./memory/`（读写）/ `skills/`（只读），防越权读写（如 `.env`）。
+不引入"分布式锁 / 全局锁"。文件工具路径限定（两层）：
+- **读**：`./memory/`（读）/ `skills/`（只读），防越权读 `.env`。
+- **agent 写（M5 起严收）**：白名单仅 `^\./memory/profile/profile\.md$`（regex 字面同 `src/lit_agent/tools/memory.py::_WRITE_WHITELIST`，含 CLAUDE.md §5 同步）。越白名单 → `PathNotWhitelistedError`；越 memory → `PathNotAllowed`。基础设施代码（paper.md 落盘 / session md 派生）走 `paper_md.atomic_write` 直接绕过此白名单——白名单专管 agent 工具入口。
 
 ### 3.5 并发：交给 LangGraph，不自建 locks
 
