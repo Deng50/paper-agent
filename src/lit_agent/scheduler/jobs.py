@@ -235,6 +235,56 @@ async def run_daily_push(
     return status
 
 
+async def run_profile_update(
+    *,
+    settings: Settings | None = None,
+    session_factory: async_sessionmaker[AsyncSession] | None = None,
+) -> str:
+    """每日 11:30 cron 触发 lit_agent 按 profile_update.skill.md 增量改写画像（M5 A1）。
+
+    流程（不在本函数；本函数只发动）：
+    - build_lit_agent(skills=("profile_update",)) → 拼写权 override prompt + 加 write_file_tool
+    - HumanMessage 发动 → agent 按 skill 7 步流程 read profile.md → list feedback/ →
+      读 30 天反馈 + 对照 paper.md 抽关键词 → 增量改写 → write_file 1 次原子写
+
+    错峰逻辑：daily-push 10:00 cron → 11:00 retry cron → 11:30 本 cron，三段不踩。
+    feedback 派生 cron 03:00 已先落盘日志，确保本 11:30 有 fresh 数据可读。
+
+    thread_id：每次新会话（profile_update:{date}），用 adelete_thread 强清，
+    不复用上次 state。返回 success / "failed: {err}"。
+    """
+    settings = settings or get_settings()
+    run_date = _run_date(settings)
+    thread_id = f"profile_update:{run_date.isoformat()}"
+
+    try:
+        async with AsyncPostgresSaver.from_conn_string(settings.psycopg_dsn) as saver:
+            await saver.adelete_thread(thread_id)
+            agent = build_lit_agent(
+                checkpointer=saver,
+                settings=settings,
+                skills=("profile_update",),
+            )
+            await agent.ainvoke(
+                {
+                    "messages": [
+                        HumanMessage(
+                            content=(
+                                f"今天是 {run_date.isoformat()}，执行画像增量更新："
+                                "按 profile_update SKILL 7 步流程跑一次。"
+                            )
+                        )
+                    ]
+                },
+                config={"configurable": {"thread_id": thread_id}},
+            )
+        _log.info("profile_update_done", run_date=str(run_date))
+        return "success"
+    except Exception as exc:
+        _log.exception("profile_update_failed", run_date=str(run_date))
+        return f"failed: {exc}"
+
+
 def _format_feedback_log_lines(rows: list[Feedback], tz: ZoneInfo) -> dict[dt.date, list[str]]:
     """纯函数：feedback 行按本地日期 group + 格式化成 log 行。便于无 PG 单测。
 
@@ -309,13 +359,23 @@ def create_scheduler(settings: Settings | None = None) -> AsyncIOScheduler:
         replace_existing=True,
     )
     # M5 决策 A4：03:00 cron 派生 PG feedback → ./memory/feedback/{date}.log，
-    # 为 11:30 profile_update cron（C6）提供数据源。03:00 取错峰时段，与 daily-push 互不踩。
+    # 为 11:30 profile_update cron 提供数据源。03:00 取错峰时段，与 daily-push 互不踩。
     scheduler.add_job(
         derive_feedback_logs,
         "cron",
         hour=3,
         minute=0,
         id="feedback_derive",
+        replace_existing=True,
+    )
+    # M5 决策 A1：11:30 cron 触发 lit_agent(skills=("profile_update",)) 按 skill 增量改写
+    # profile.md。错峰：daily-push 10:00 → retry 11:00 → profile-update 11:30。
+    scheduler.add_job(
+        run_profile_update,
+        "cron",
+        hour=11,
+        minute=30,
+        id="profile_update",
         replace_existing=True,
     )
     return scheduler
