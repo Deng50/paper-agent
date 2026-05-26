@@ -33,11 +33,16 @@ def test_render_escapes_untrusted_title() -> None:
 
 
 def test_send_email_no_recipient_fail_fast() -> None:
-    """SMTP_TO 为空（测试默认）→ NoRecipientError，不静默吞推送。"""
+    """SMTP_TO 显式置空 → NoRecipientError，不静默吞推送。
+
+    用 `model_copy` 而非 `get_settings()`：避免读到 `.env` 真 SMTP_TO 导致 fail-fast 失效
+    （get_settings() 是 lru_cache 单例，由 pydantic-settings 在测试进程里加载 .env）。
+    """
+    settings = get_settings().model_copy(update={"smtp_to": ""})
 
     async def _run() -> None:
         with pytest.raises(NoRecipientError):
-            await send_email("subj", "<p>body</p>", settings=get_settings())
+            await send_email("subj", "<p>body</p>", settings=settings)
 
     asyncio.run(_run())
 
