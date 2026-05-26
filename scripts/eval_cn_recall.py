@@ -56,7 +56,10 @@ def _eval_questions(
     n = len(questions)
 
     for q in questions:
-        query = q.get("question", "") or ""
+        # yaml v2 schema：question 是给人看的自然语言，query_zh / query_en 是给 grep 用的
+        # 空格分词关键词。优先 query_zh（中文召回率主口径，docs/05 §5）→ query_en（同义词
+        # 兜底）→ question（v1 backward compat）。
+        query = q.get("query_zh", "") or q.get("query_en", "") or q.get("question", "") or ""
         scope_str = q.get("scope", "papers")
         expected = q.get(expected_field, []) or []
         theme = q.get("theme", "untagged")
