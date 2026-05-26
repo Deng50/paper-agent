@@ -213,6 +213,7 @@ async def _chat_event_stream(
                 checkpointer=saver,
                 settings=settings,
                 skills=("daily_search", "memory_recall"),
+                chat_session_id=session_id,  # M5 chat-rerun 解锁 trigger_push_pipeline_tool
             )
             user_msg = HumanMessage(content=body.content)
             main_task = asyncio.create_task(

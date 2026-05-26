@@ -155,10 +155,98 @@ def _load_skill(name: str, settings: Settings) -> str:
         return ""
 
 
+def _make_trigger_push_pipeline_tool(settings: Settings, chat_session_id: str | None) -> Any:
+    """工厂：把 chat_session_id 闭包绑进 trigger_push_pipeline_tool，便于日志追踪。
+
+    每个 build_lit_agent 调用绑当前 chat thread_id；daily-push cron 路径不调本工厂
+    （它不在 chat 内，没有 chat session 概念）。
+    """
+
+    @tool
+    async def trigger_push_pipeline_tool(topic_override: str | None = None) -> str:
+        """chat-rerun 完整推送 pipeline：清当天 checkpoint → 重搜+评分 → 覆盖 pushes 行
+        → 发邮件 → 落 paper.md。**前端/邮箱/pushes/memory 同步一致**。
+
+        用户对当前/今天的推送结果不满意 + 要求重做时调用本工具（细则见 memory_recall.skill）。
+
+        入参 topic_override：
+        - 用户提到具体方向时填字符串（如「固态电池」「钠离子电池界面工程」）
+        - 未提方向时填 None（用 profile 默认偏好）
+
+        返回 JSON：{status, push_id, selected_count, email_sent, papers[], chat_session_id, error?}。
+        把 papers 简短列回用户 + 告诉他「邮箱已发送，前端『每日推送』已更新」。
+        """
+        # 延迟 import 防 chat → jobs → chat 循环
+        from sqlalchemy import select
+
+        from lit_agent.db.base import get_session_factory
+        from lit_agent.db.models import Push
+        from lit_agent.scheduler.jobs import _run_date, run_daily_push
+
+        try:
+            factory = get_session_factory()
+            status = await run_daily_push(
+                triggered_by="chat_rerun",
+                force=True,
+                topic_override=topic_override,
+                settings=settings,
+                session_factory=factory,
+            )
+            _log.info(
+                "chat_rerun_pipeline_done",
+                status=status,
+                topic_override=topic_override,
+                chat_session_id=chat_session_id,
+            )
+            run_date = _run_date(settings)
+            async with factory() as s:
+                push = (
+                    await s.execute(
+                        select(Push).where(Push.user_id == 1, Push.run_date == run_date)
+                    )
+                ).scalar_one_or_none()
+            if push is None:
+                return json.dumps(
+                    {"status": status, "error": "push row not found after pipeline"},
+                    ensure_ascii=False,
+                )
+            papers_brief = [
+                {
+                    "paper_id": p.get("paper_id"),
+                    "title": p.get("title"),
+                    "url": p.get("url"),
+                    "score": p.get("score"),
+                }
+                for p in (push.selected_papers or [])
+            ]
+            return json.dumps(
+                {
+                    "status": status,
+                    "push_id": push.id,
+                    "trigger": push.triggered_by,
+                    "selected_count": push.selected_count,
+                    "email_sent": push.email_sent,
+                    "papers": papers_brief,
+                    "chat_session_id": chat_session_id,
+                    "error": push.error,
+                },
+                ensure_ascii=False,
+            )
+        except Exception as exc:
+            _log.exception("chat_rerun_pipeline_failed", chat_session_id=chat_session_id)
+            return json.dumps(
+                {"status": "failed", "error": f"{type(exc).__name__}: {exc}"},
+                ensure_ascii=False,
+            )
+
+    return trigger_push_pipeline_tool
+
+
 def build_lit_agent(
     checkpointer: BaseCheckpointSaver[Any] | None = None,
     settings: Settings | None = None,
     skills: Sequence[str] = ("daily_search",),
+    chat_session_id: str | None = None,
 ) -> (
     Any
 ):  # create_react_agent 返回 CompiledStateGraph，泛型 arity 在 langgraph 间不稳，框架边界用 Any
@@ -167,6 +255,10 @@ def build_lit_agent(
     skills 默认 `("daily_search",)` 保持 M3 daily-push 单 skill 行为向后兼容；
     M4 chat 路由显式传 `("daily_search", "memory_recall")`。`profile_update.skill.md`
     留 M5 画像自更新里程碑才拼入（不默认开启，避免每次推送多付 token）。
+
+    chat_session_id：仅 chat 路由传（chat.py）；非 None 时把 trigger_push_pipeline_tool
+    入 tools，让 chat agent 能发起 chat-rerun（M5 新通路 / owner 反转 §3.11）。
+    daily-push cron / sessions / scheduler 不传，agent 拿不到本工具，行为不变。
 
     注：newapi 不透传 cache_control（handover §6.11），故不设缓存；成本靠精简 prompt
     + dry-run token 日志守（见 scheduler/jobs.py）。
@@ -185,6 +277,10 @@ def build_lit_agent(
     if "profile_update" in skills:
         prompt_parts.append(_PROFILE_UPDATE_WRITE_OVERRIDE)
         tools.append(write_file_tool)
+    # M5 chat-rerun 通路（owner 反转 §3.11）：chat 路由传 chat_session_id 才解锁本工具，
+    # daily-push cron / sessions 重建路径不传 → 不解锁，行为完全向后兼容。
+    if chat_session_id is not None:
+        tools.append(_make_trigger_push_pipeline_tool(settings, chat_session_id))
 
     system_prompt = "\n\n".join(prompt_parts)
 

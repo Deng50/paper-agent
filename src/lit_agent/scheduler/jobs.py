@@ -150,12 +150,16 @@ async def run_daily_push(
     session_factory: async_sessionmaker[AsyncSession] | None = None,
     force: bool = False,
     run_date_override: dt.date | None = None,
+    topic_override: str | None = None,
 ) -> str:
     """执行一次每日推送。返回状态字符串：busy/already_done/success/partial/failed。
 
     force=True：今日 status=success 时仍强制重跑（owner 手动触发覆盖；docs/04 §8.1
     字面）；同一 thread_id checkpoint 复用（handover §3.9 行为提醒）。
     run_date_override：补跑历史某天用；缺省取 settings._run_date（今天）。
+    topic_override：chat-rerun 路径用 —— 把用户在 chat 里指定的方向作为 HumanMessage
+    注入提示，agent 按 daily_search.skill.md 步骤 2 把 topic 翻译/扩展成英文检索词
+    （优先于 profile）。普通 cron / manual 路径填 None。
     """
     settings = settings or get_settings()
     factory = session_factory or get_session_factory()
@@ -188,12 +192,15 @@ async def run_daily_push(
                 await saver.adelete_thread(thread_id)
                 _log.info("daily_push_force_clear_checkpoint", thread_id=thread_id)
             agent = build_lit_agent(checkpointer=saver, settings=settings)
+            kickoff = f"今天是 {run_date.isoformat()}，执行每日推送。"
+            if topic_override:
+                # chat-rerun 路径：把用户指定主题字面注入；daily_search.skill.md 步骤 2 接住
+                kickoff += (
+                    f"\n本次重新检索主题（chat 用户指定，优先用此方向生成英文检索词）："
+                    f"{topic_override}"
+                )
             result = await agent.ainvoke(
-                {
-                    "messages": [
-                        HumanMessage(content=f"今天是 {run_date.isoformat()}，执行每日推送。")
-                    ]
-                },
+                {"messages": [HumanMessage(content=kickoff)]},
                 config={"configurable": {"thread_id": thread_id}},
             )
         extracted = _extract(result)

@@ -28,8 +28,16 @@ M4 验收硬指标「上下文已有时零工具调用」。
   - **query 分词**：空格分 token，**所有 token AND 全命中**，大小写不敏感。
     **不支持 OR / regex / 引号短语**（M2 `tools/memory.py:75-104` 字面实现）。
   - 返回 `[{path, snippet}]`，按路径倒序（新日期目录在前 = 新内容优先）。
-- **`search_papers(queries, min_score)`** —— **去 4 源拉新文献**（带去重 + 评分
-  + 落盘）。**用于「找最近 / 还没看过的」**。一次调用拿干净 Top N，**绝不连调**。
+- **`search_papers(queries, min_score)`** —— **chat 内 lightweight 拉新文献**（带去重 +
+  评分 + 落盘）。**用于「用户主动找一个新方向，没指向当前推送」**。一次调用拿干净 Top N，
+  **绝不连调**。**只落 paper.md，不发邮件不写 pushes 表**。
+- **`trigger_push_pipeline(topic_override)`** —— **chat-rerun 完整推送 pipeline**。
+  **用于「用户对当前/今天的推送结果不满意 + 要求重做 / 换一批 / 重新检索」**。复用
+  daily-push 全套流程：清当天 checkpoint → 重新搜+评分 → **覆盖当天 pushes 行**
+  → **发邮件** → **落 paper.md**。**前端/邮箱/pushes/memory 同步一致**，是替换今天
+  推送的唯一正确入口。
+  - `topic_override`：用户提到具体方向时填（如「固态电池」「钠离子电池界面工程」）；
+    没提方向时填 `None`（用 profile 默认偏好重搜）。
 - **`list_dir(path)`** —— 列 `./memory/` 或 `skills/` 下某目录的条目名（不递归）。
   **用于「回顾全部 / 看看 archive」宽泛请求**：先 `list_dir("./memory/papers/")` 看日期
   目录，再 `list_dir("./memory/papers/{date}/")` 看具体文件。**比 search_memory 给空
@@ -68,24 +76,49 @@ hits 会幻觉答「档案为空」**撒谎**。先 list_dir 看真实有什么�
 | 寒暄 / 非领域 | "你好"、"今天天气" |
 | 纯定义（不依赖记忆，按你已有领域知识答即可） | "什么是 EIS？" |
 | 重复同一问题 | user 重述上一句 → 复述你上轮答案 |
-| **用户要求"现在推送一次" / "执行推送"** | "现在跑一次推送" / "再推一次" |
 
-最后一条特别说明：你**没有执行推送的能力**（发邮件 / 写 pushes 表 / 写画像
-都是系统代码职责，不是 agent 工具）。礼貌回答：「我不能在对话里推送，
-请去左侧『📬 每日推送』tab 点『▶️ 立即触发一次推送』按钮；若今日已推过想
-重跑，勾选『强制重跑（覆盖今日 success）』再点」—— 一句话引导，**不要沉默
-不答**。
+### 应该 `trigger_push_pipeline`（chat-rerun 替换当前推送，**M5 新通路**）
 
-### 应该 `search_papers`（不要混用）
+用户**针对当前/今天的推送结果不满意 + 要求重做**时调用。**绝不要在这种意图下裸调
+search_papers**——会造成「memory 有 paper.md 但 pushes 表 / 邮箱 / 前端不知情」的
+不一致状态（owner 报告的 bug）。
+
+| 用户意图特征 | 例 | `topic_override` |
+|------------|----|------------------|
+| 对当前推送不满 + 重做（无新方向）| "今天推送的不满意，重新检索一批" / "这批不行重新来" / "重搜一批" / "再找一批" | `None` |
+| 对当前推送不满 + 指定新方向 | "今天推送的不满意，帮我搜固态电池的" / "把今天换成钠离子电池方向" / "重新检索一批界面工程的" | "固态电池" / "钠离子电池" / "界面工程" |
+| 单纯要求执行一次推送 | "现在跑一次推送" / "再推一次" | `None` |
+
+**关键判定信号**（任一出现就是 chat-rerun，**走 trigger_push_pipeline 不走 search_papers**）：
+- 「重新检索 / 重新搜 / 重搜 / 重新跑 / 重跑 / 再找一批 / 换一批 / 重推 / 重新拉」
+- 「这批 / 这次 / 刚才推的 / 今天推的」+ 「不满意/不行/不好/换/重」
+- 「覆盖今天 / 替换今天 / 重新来 / 推一次 / 推送一次」
+
+`topic_override` 提取规则：句中含明确领域名词（固态电解质 / 钠离子电池 / 锂金属负极 /
+界面工程 / PVDF / argyrodite / 液流电池 / 电池热管理 等）→ 提取作 topic_override；
+否则 `None`。
+
+调用 `trigger_push_pipeline(topic_override=...)` 后，工具返回 JSON 含 `status / push_id /
+selected_count / papers[] / email_sent`，你**简短把推荐的论文列出**（标题 + url）回复
+用户，告诉他「已重新检索完成，邮箱已发送，前端『每日推送』tab 已更新」。
+
+### 应该 `search_papers`（chat 内 lightweight 查询，**不针对当前推送的不满**）
+
+只在用户**找新方向 / 主动浏览**时用，且**没有「重新 / 换 / 这批不行 / 今天推的」等
+rerun 意图**：
 
 | 信号 | 例 |
 |------|----|
-| 显式要"最新 / 最近 / 还没看过的" | "找最近一周关于 argyrodite 的新论文" |
+| 显式要"最新 / 最近 / 还没看过的" 新方向 | "找最近一周关于 argyrodite 的新论文" |
 | 主题之前未在 memory 出现且用户要文献 | "找几篇钠离子电池界面的"（archive 里没推过钠） |
 
-**冲突判定**：用户问「关于 X 的文献」→ **默认先 `search_memory(scope="papers")`**，
-"已推过的优先复用"。**仅当 grep 0 命中且用户明确说「新的 / 最近的 / 还没看过」**，
-才 `search_papers`。
+**search_papers 只落 paper.md 到 memory，不发邮件不覆盖 pushes**。
+适合用户「随便看看新方向，不要影响今天推送」。
+
+**冲突判定**（3-way 路由树）：
+1. 含 chat-rerun 信号词？→ `trigger_push_pipeline`（**优先**）
+2. 否则用户问「关于 X 的文献」→ 默认先 `search_memory(scope="papers")`「已推过的优先复用」
+3. 否则用户明确说「新的 / 最近的 / 还没看过」（且无 rerun 信号）→ `search_papers`
 
 ## query 写法（决定召回率）
 
@@ -131,13 +164,17 @@ search_memory(query="sulfide solid electrolyte", scope="papers")  # 命中英文
 ```
 1. 上下文已答？ → 是 → 直接答（流里 0 tool 事件）
                 ↓ 否
-2. 用户要新文献？ → 是 → search_papers
+2. chat-rerun 信号？（重新/换/这批不行/今天推的不满/再来一批 等）
+                ↓ 是 → trigger_push_pipeline(topic_override=…)
+                       工具完成 → 简短列回推荐论文 + 「邮箱已发送，前端已更新」
+                ↓ 否
+3. 用户要新方向文献？ → 是 → search_papers（chat lightweight，只落 paper.md）
                 ↓ 否（要的是我们已看过的）
-3. 选 scope（按 Trigger 启发式表）
-4. 写 query（中文 + 英文两跑；token AND，去虚词）
-5. search_memory → 命中 → read_file 命中文件 → 带 url 答
-                → 0 命中 → 礼貌说没找到，问要不要 search_papers 拉新的；
-                           或按已有领域知识答，明示"未在本地档案命中"
+4. 选 scope（按 Trigger 启发式表）
+5. 写 query（中文 + 英文两跑；token AND，去虚词）
+6. search_memory → 命中 → read_file 命中文件 → 带 url 答
+                 → 0 命中 → 礼貌说没找到，问要不要 search_papers 拉新的；
+                            或按已有领域知识答，明示"未在本地档案命中"
 ```
 
 ## scope 选择优先级（冲突时）
