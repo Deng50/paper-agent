@@ -12,13 +12,13 @@ from typing import Any
 
 import structlog
 from fastapi import APIRouter, HTTPException, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from lit_agent.core.config import get_settings
 from lit_agent.core.deps import AuthDep, DbDep
 from lit_agent.db.models import Push
-from lit_agent.tools.session_md import find_existing_by_thread, trigger_of
+from lit_agent.tools.session_md import find_existing_by_thread, set_session_title, trigger_of
 
 router = APIRouter(prefix="/api/v1", tags=["sessions"], dependencies=[AuthDep])
 _log = structlog.get_logger("sessions")
@@ -103,6 +103,27 @@ async def get_session(run_date: dt.date, db: DbDep) -> SessionDetail:
         queries=push.queries or [],
         error=push.error,
     )
+
+
+class TitleUpdateIn(BaseModel):
+    title: str = Field(min_length=1, max_length=120, description="新 title（1-120 字）")
+
+
+@router.patch("/sessions/{thread_id}/title", status_code=200)
+async def update_session_title(thread_id: str, body: TitleUpdateIn) -> dict[str, Any]:
+    """用户手动重命名 session（M6 P2 / docs 反馈闭环 P2）。
+
+    设 frontmatter.title + title_manually_edited=True，永锁不被自动 title 覆盖。
+    404：找不到对应 session md。daily-push session 也允许重命名（区别于 delete 的限制）。
+    """
+    if trigger_of(thread_id) == "daily-push":
+        # daily-push 也允许重命名（owner P2 spec 没限）；唯一 delete 才限
+        pass
+    settings = get_settings()
+    md_path = set_session_title(thread_id, body.title, settings)
+    if md_path is None:
+        raise HTTPException(status_code=404, detail=f"未找到 session: {thread_id}")
+    return {"thread_id": thread_id, "title": body.title, "manually_edited": True}
 
 
 @router.delete("/sessions/{thread_id}", status_code=204)

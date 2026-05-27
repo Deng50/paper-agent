@@ -37,6 +37,86 @@ def api_post(path: str, payload: dict[str, Any] | None = None) -> tuple[int, Any
         return 0, str(exc)
 
 
+# M6 P0：反馈类型枚举（与后端 feedback.py 的 _POSITIVE_TYPES / _NEGATIVE_TYPES 同步）
+_POSITIVE_TYPE_LABELS = {
+    "topic_relevant": "主题相关",
+    "useful_method": "方法有启发",
+    "related_to_current_research": "和当前课题相关",
+    "want_follow_up": "想继续追踪该方向",
+    "high_quality": "论文质量较高",
+    "other": "其他",
+}
+_NEGATIVE_TYPE_LABELS = {
+    "topic_irrelevant": "主题不相关",
+    "low_quality": "论文质量一般",
+    "too_theoretical": "太偏理论",
+    "too_experimental": "太偏实验",
+    "too_engineering": "太偏工程应用",
+    "duplicate": "重复 / 已读过",
+    "not_current_focus": "不是当前阶段重点",
+    "other": "其他",
+}
+
+
+def _render_feedback_form(paper_id: str, signal_type: str, run_date: str) -> None:
+    """M6 P0 反馈表单（1-call 模型）：feedback_type dropdown + comment 输入 + 2 个提交按钮。
+
+    「提交」带 feedback_type / comment；「仅保存点赞点踩」忽略表单内容，只发 signal_type。
+    任一按钮 → 1 次 POST /api/v1/feedback。
+    """
+    labels_dict = _POSITIVE_TYPE_LABELS if signal_type == "up" else _NEGATIVE_TYPE_LABELS
+    options = list(labels_dict.keys())
+    chosen_label = st.selectbox(
+        "反馈类型（可选）",
+        options=options,
+        format_func=lambda k: labels_dict.get(k, k),
+        index=None,
+        placeholder="不选 = 仅保存点赞点踩",
+        key=f"fbtype_{signal_type}_{run_date}_{paper_id}",
+    )
+    comment = st.text_area(
+        "原因（可选）",
+        max_chars=2000,
+        placeholder="自由文本，例如：与硫化物方向相关、量纲分析章节有启发……",
+        key=f"fbcomment_{signal_type}_{run_date}_{paper_id}",
+    )
+    col_submit, col_skip = st.columns(2)
+    with col_submit:
+        if st.button(
+            "✅ 提交", key=f"fbsub_{signal_type}_{run_date}_{paper_id}", use_container_width=True
+        ):
+            payload: dict[str, Any] = {"paper_id": paper_id, "signal_type": signal_type}
+            if chosen_label:
+                payload["feedback_type"] = chosen_label
+            if comment.strip():
+                payload["comment"] = comment.strip()
+            payload["source"] = "daily_push"
+            fc, _fd = api_post("/api/v1/feedback", payload)
+            if fc == 201:
+                tag = labels_dict.get(chosen_label or "", "")
+                st.toast(f"已记录 {'👍' if signal_type == 'up' else '👎'} · {tag or '无原因'}")
+            elif fc == 409:
+                st.toast("5 分钟内重复，已忽略")
+            else:
+                st.toast(f"失败（HTTP {fc}）")
+    with col_skip:
+        if st.button(
+            "⏭️ 仅保存点赞点踩",
+            key=f"fbskip_{signal_type}_{run_date}_{paper_id}",
+            use_container_width=True,
+        ):
+            fc, _fd = api_post(
+                "/api/v1/feedback",
+                {"paper_id": paper_id, "signal_type": signal_type, "source": "daily_push"},
+            )
+            if fc == 201:
+                st.toast(f"已记录 {'👍' if signal_type == 'up' else '👎'}（无原因）")
+            elif fc == 409:
+                st.toast("5 分钟内重复，已忽略")
+            else:
+                st.toast(f"失败（HTTP {fc}）")
+
+
 tab_push, tab_status = st.tabs(["📬 每日推送", "🩺 系统状态"])
 
 # ---------------- 每日推送 ----------------
@@ -89,17 +169,14 @@ with tab_push:
                     if p.get("abstract"):
                         st.write(p["abstract"][:400] + ("…" if len(p["abstract"]) > 400 else ""))
                     pid = p.get("paper_id", "")
-                    c1, c2, _ = st.columns([1, 1, 6])
-                    if c1.button("👍", key=f"up_{run_date}_{pid}"):
-                        fc, _fd = api_post(
-                            "/api/v1/feedback", {"paper_id": pid, "signal_type": "up"}
-                        )
-                        st.toast("已记录 👍" if fc == 201 else f"重复/失败（HTTP {fc}）")
-                    if c2.button("👎", key=f"down_{run_date}_{pid}"):
-                        fc, _fd = api_post(
-                            "/api/v1/feedback", {"paper_id": pid, "signal_type": "down"}
-                        )
-                        st.toast("已记录 👎" if fc == 201 else f"重复/失败（HTTP {fc}）")
+                    # M6 P0 1-call 模型（owner Q1 a）：点 👍/👎 展开表单 → 表单提交才真存
+                    # 默认 expander 收起；用户点 ▾ 展开后填 feedback_type/comment，再点
+                    # 「提交」或「仅保存点赞点踩」（跳过原因）发 1 次 POST。
+                    c1, c2 = st.columns([1, 1])
+                    with c1.popover("👍 反馈"):
+                        _render_feedback_form(pid, "up", run_date)
+                    with c2.popover("👎 反馈"):
+                        _render_feedback_form(pid, "down", run_date)
         else:
             st.error(f"读取详情失败 HTTP {dcode}：{detail}")
 

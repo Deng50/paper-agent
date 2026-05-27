@@ -45,15 +45,31 @@ list_dir("./memory/feedback/")
 
 逐个 `read_file("./memory/feedback/{date}.log")`，**最多读 30 个文件**。
 
-每行格式（C4 落地的协议）：
+每行格式（M6 P0 起扩到 6 字段；老行 4 字段向后兼容，缺字段标 "-"）：
 ```
-2026-05-27T10:23:45+08:00 | up | s2-abc123 | +1.00
-2026-05-27T11:45:12+08:00 | down | openalex-w7161571770 | -1.00
+2026-05-27T10:23:45+08:00 | up | s2-abc123 | +1.00 | topic_relevant | 跟我固态电解质方向高度相关
+2026-05-27T11:45:12+08:00 | down | openalex-w7161571770 | -1.00 | too_theoretical | 公式推导太多，缺实验验证
+2026-05-26T19:03:37+08:00 | up | arxiv-2605.23904v1 | +1.00 | - | -
 ```
 
-字段：`本地ISO时间戳 | signal_type(up/down) | paper_id | signed_weight`
+字段（按 `|` 切分）：`本地ISO时间戳 | signal_type(up/down) | paper_id | signed_weight | feedback_type | comment`
 
-聚合每个 paper_id 的净分数 = sum(signed_weight)。
+**M6 P0 反馈层级**：
+1. **弱反馈**（只有 signal_type，feedback_type 与 comment 都是 "-"）：只用于聚合 paper_id 净分调整 keyword_weights
+2. **结构化反馈**（含 feedback_type）：用于明确知道**为什么** 👍/👎，影响 keyword_weights 调整方向（见下）
+3. **文本反馈**（含 comment）：自由文本原因；本轮**仅作日志保留**，不抽取关键词进 profile（owner 字面：本阶段不实现"从自由对话中自动抽取长期偏好"）
+
+聚合规则：
+- 每个 paper_id 的净分数 = sum(signed_weight)
+- 关键词权重调整 = 老逻辑（每个 paper 看 paper.md 关键词，按净分加权累加）
+- **新增正向 feedback_type 信号**：`topic_relevant / useful_method / related_to_current_research / want_follow_up / high_quality` → **加强**该 paper 关键词的正向权重（系数 × 1.5）
+- **新增负向 feedback_type 信号**：
+  - `topic_irrelevant / not_current_focus` → **加强**负向权重（系数 × 1.5）
+  - `low_quality / too_theoretical / too_experimental / too_engineering` → **保持**默认负向权重（这些是论文质量瑕疵，不一定代表用户不喜欢该方向，避免误把整个方向加进 negative_keywords）
+  - `duplicate` → **忽略**（仅记录，不影响偏好；这是用户已读过的信号，跟方向偏好无关）
+
+**negative_keywords 触发条件保留**（M5 原有）：某关键词在 ≥ 3 篇文章中累积净分 ≤ -2 → 加入 negative_keywords。
+**M6 P0 强化**：若该关键词所有 down 反馈的 feedback_type 都是 `topic_irrelevant / not_current_focus`（明示方向不感兴趣），阈值放宽到 ≥ 2 篇累积 ≤ -1.5 即触发。
 
 ### 第 4 步：把 paper_id 映射到主题关键词
 

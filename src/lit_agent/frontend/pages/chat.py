@@ -51,11 +51,31 @@ def _api_delete(path: str) -> tuple[int, Any]:
         return 0, str(exc)
 
 
+def _api_patch(path: str, payload: dict[str, Any]) -> tuple[int, Any]:
+    try:
+        r = httpx.patch(f"{API_BASE_URL}{path}", headers=_JSON_HEADERS, json=payload, timeout=20.0)
+        return r.status_code, (r.json() if r.content else None)
+    except Exception as exc:
+        return 0, str(exc)
+
+
+def _display_title(s: dict[str, Any]) -> str:
+    """会话显示名：优先 title 字段（M6 P2 新增），fallback 老的「trigger · time (n)」。"""
+    title = s.get("title")
+    if title and isinstance(title, str) and title.strip():
+        return title.strip()
+    # fallback：老 session md 无 title 字段
+    trigger = s.get("trigger", "chat")
+    last_active = str(s.get("last_active_at") or "")[:16].replace("T", " ")
+    return f"{trigger} · {last_active}"
+
+
 for _key, _default in (
     ("chat_session_id", None),
     ("chat_messages", []),
     ("delete_confirm_tid", None),
     ("history_loaded_once", False),
+    ("rename_active_tid", None),  # M6 P2：哪个 session 正在被重命名（None = 没在改）
 ):
     if _key not in st.session_state:
         st.session_state[_key] = _default
@@ -192,35 +212,68 @@ with st.sidebar:
             tid = str(s.get("thread_id") or "")
             if not tid:
                 continue
-            trigger = s.get("trigger", "chat")
-            last_active = str(s.get("last_active_at") or "")[:16].replace("T", " ")
             msg_count = s.get("message_count", 0)
-            topics = s.get("topics") or []
-            topic_str = ", ".join(topics) if topics else f"{trigger}"
-            display_label = f"{topic_str} · {last_active} ({msg_count})"
+            # M6 P2：用 title 显示（fallback 老格式）
+            display_label = f"{_display_title(s)} ({msg_count})"
             current = st.session_state.get("chat_session_id") == tid
             btn_label = f"▶ {display_label}" if current else display_label
+
+            # M6 P2：3-dot menu via st.popover（streamlit 1.32+ 支持，pyproject 锁 1.57）
             cols = st.columns([5, 1])
             if cols[0].button(btn_label, key=f"sess_{tid}", use_container_width=True):
                 _load_session_messages(tid)
                 st.rerun()
-            confirm_tid = st.session_state.get("delete_confirm_tid")
-            if confirm_tid == tid:
-                if cols[1].button("⚠️", key=f"del_confirm_{tid}", help="再点确认删除"):
-                    dcode, _ = _api_delete(f"/api/v1/sessions/{tid}")
-                    if dcode in (200, 204):
-                        if st.session_state.get("chat_session_id") == tid:
-                            st.session_state["chat_session_id"] = None
-                            st.session_state["chat_messages"] = []
-                        st.toast(f"已删除 {tid[:12]}…")
+
+            with cols[1].popover("⋯", help="重命名 / 删除"):
+                # 重命名表单
+                rename_default = (
+                    s.get("title")
+                    if s.get("title")
+                    else f"chat · {str(s.get('last_active_at') or '')[:16].replace('T', ' ')}"
+                )
+                new_title = st.text_input(
+                    "新标题",
+                    value=rename_default,
+                    key=f"rename_input_{tid}",
+                    max_chars=120,
+                )
+                if st.button("✏️ 重命名", key=f"rename_btn_{tid}", use_container_width=True):
+                    title_value = (new_title or "").strip()
+                    if not title_value:
+                        st.toast("标题不能为空")
                     else:
-                        st.toast(f"删除失败 HTTP {dcode}")
-                    st.session_state["delete_confirm_tid"] = None
-                    st.rerun()
-            else:
-                if cols[1].button("🗑", key=f"del_{tid}", help="点 1 次预删，再点确认"):
-                    st.session_state["delete_confirm_tid"] = tid
-                    st.rerun()
+                        rcode, _ = _api_patch(
+                            f"/api/v1/sessions/{tid}/title", {"title": title_value}
+                        )
+                        if rcode == 200:
+                            preview = (
+                                f"{title_value[:20]}…" if len(title_value) > 20 else title_value
+                            )
+                            st.toast(f"已重命名为「{preview}」")
+                            st.rerun()
+                        else:
+                            st.toast(f"重命名失败 HTTP {rcode}")
+                st.divider()
+                # 删除（二次确认）
+                confirm_tid = st.session_state.get("delete_confirm_tid")
+                if confirm_tid == tid:
+                    if st.button(
+                        "⚠️ 再点确认删除", key=f"del_confirm_{tid}", use_container_width=True
+                    ):
+                        dcode, _ = _api_delete(f"/api/v1/sessions/{tid}")
+                        if dcode in (200, 204):
+                            if st.session_state.get("chat_session_id") == tid:
+                                st.session_state["chat_session_id"] = None
+                                st.session_state["chat_messages"] = []
+                            st.toast(f"已删除 {tid[:12]}…")
+                        else:
+                            st.toast(f"删除失败 HTTP {dcode}")
+                        st.session_state["delete_confirm_tid"] = None
+                        st.rerun()
+                else:
+                    if st.button("🗑 删除", key=f"del_{tid}", use_container_width=True):
+                        st.session_state["delete_confirm_tid"] = tid
+                        st.rerun()
 
     st.divider()
     st.subheader("当前会话")

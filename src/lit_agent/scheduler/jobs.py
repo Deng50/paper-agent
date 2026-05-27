@@ -33,6 +33,7 @@ from lit_agent.db.base import get_session_factory
 from lit_agent.db.models import Feedback, Push
 from lit_agent.tools.mail import render_daily_push, send_email
 from lit_agent.tools.paper_md import atomic_write
+from lit_agent.tools.session_md import derive_session_md
 
 _log = structlog.get_logger("daily_push")
 
@@ -89,6 +90,48 @@ def _extract(result: dict[str, Any]) -> dict[str, Any]:
             "cache_creation": cache_creation,
         },
     }
+
+
+def _compose_daily_push_message(
+    run_date: dt.date, intro: str, papers: list[dict[str, Any]]
+) -> AIMessage:
+    """把结构化 papers + intro 拼成 markdown AIMessage（M6 P1 / Q2 owner 拍 a）。
+
+    格式适合用户后续追问「第 N 篇详细讲一下」/「以后少推 XX」。
+    """
+    lines: list[str] = [
+        f"📚 **每日文献推送 · {run_date.isoformat()}** · 共 {len(papers)} 篇",
+        "",
+    ]
+    if intro:
+        lines.append(intro.strip())
+        lines.append("")
+    lines.append("---")
+    lines.append("")
+    for idx, p in enumerate(papers, start=1):
+        title = p.get("title") or "(无标题)"
+        url = p.get("url") or ""
+        authors = p.get("authors") or []
+        score = p.get("score")
+        reason = p.get("reason") or ""
+        if url:
+            lines.append(f"**{idx}. [{title}]({url})**")
+        else:
+            lines.append(f"**{idx}. {title}**")
+        if authors:
+            lines.append(f"- 作者：{', '.join(str(a) for a in authors[:5])}")
+        if score is not None:
+            lines.append(f"- 评分：{score} · {reason}")
+        elif reason:
+            lines.append(f"- {reason}")
+        lines.append("")
+    lines.append("---")
+    lines.append("")
+    lines.append(
+        "💡 可继续追问：「第 N 篇详细讲一下」/「这批哪几篇最适合我的课题？」"
+        "/「以后少推 XX 方向」（chat-rerun 通路会重新检索+发邮件）"
+    )
+    return AIMessage(content="\n".join(lines))
 
 
 def _log_token_budget(run_date: dt.date, tokens: dict[str, int]) -> None:
@@ -222,6 +265,32 @@ async def run_daily_push(
 
     _log_token_budget(run_date, extracted["tokens"])
 
+    # M6 P1：成功时把结构化 paper list AIMessage append 进 LangGraph state +
+    # derive session md。让历史会话列表能看到「每日文献推送 · 日期」，用户可在
+    # 该会话继续追问「第 N 篇详细讲一下」等。失败/无 papers 时跳过。
+    if status == "success" and extracted["papers"]:
+        try:
+            push_msg = _compose_daily_push_message(
+                run_date, extracted["intro"], extracted["papers"]
+            )
+            async with AsyncPostgresSaver.from_conn_string(settings.psycopg_dsn) as saver_post:
+                agent_post = build_lit_agent(checkpointer=saver_post, settings=settings)
+                await agent_post.aupdate_state(
+                    config={"configurable": {"thread_id": thread_id}},
+                    values={"messages": [push_msg]},
+                )
+                snap = await agent_post.aget_state({"configurable": {"thread_id": thread_id}})
+                messages_for_md = snap.values.get("messages", []) if snap and snap.values else []
+            if messages_for_md:
+                derive_session_md(thread_id, messages_for_md, settings=settings)
+                _log.info(
+                    "daily_push_session_md_derived",
+                    thread_id=thread_id,
+                    msg_count=len(messages_for_md),
+                )
+        except Exception as exc:  # 不致命：session md 失败不影响推送本身
+            _log.warning("daily_push_session_md_failed", error=str(exc))
+
     async with factory() as s:
         push = await s.get(Push, push_id)
         if push is not None:
@@ -296,13 +365,22 @@ async def run_profile_update(
 def _format_feedback_log_lines(rows: list[Feedback], tz: ZoneInfo) -> dict[dt.date, list[str]]:
     """纯函数：feedback 行按本地日期 group + 格式化成 log 行。便于无 PG 单测。
 
-    每行格式（profile_update.skill.md 解析依据）：
-        2026-05-27T10:23:45+08:00 | up | s2-abc123 | +1.00
+    每行格式（M6 P0 扩 2 字段，profile_update.skill.md 解析依据）：
+        ts | signal | paper_id | weight | feedback_type | comment
+
+    - 老行（M5 前）无 feedback_type / comment → 字段写 "-"
+    - comment 含 | 字符时替换为 ⎢（避免分割歧义）
+    - comment 多行时压成一行（替换 \\n → ↵）
     """
     by_date: dict[dt.date, list[str]] = defaultdict(list)
     for r in rows:
         local_dt = r.created_at.astimezone(tz)
-        line = f"{local_dt.isoformat()} | {r.signal_type} | {r.paper_id} | {float(r.weight):+.2f}"
+        ftype = r.feedback_type or "-"
+        comment = (r.comment or "-").replace("|", "⎢").replace("\n", "↵")
+        line = (
+            f"{local_dt.isoformat()} | {r.signal_type} | {r.paper_id} | "
+            f"{float(r.weight):+.2f} | {ftype} | {comment}"
+        )
         by_date[local_dt.date()].append(line)
     return by_date
 

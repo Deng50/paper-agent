@@ -62,6 +62,49 @@ def session_md_path(
     return settings.memory_dir / "sessions" / date_str / f"{hm_str}-{trig}.md"
 
 
+def _generate_title(
+    thread_id: str, messages: list[BaseMessage], started_at_local: dt.datetime
+) -> str:
+    """生成 session title（M6 P2 / Q3 owner 拍板：仅首次 derive 生成）。
+
+    规则：
+    - daily-push trigger → "每日文献推送 · YYYY-MM-DD"
+    - 用户主动会话 → 首条 HumanMessage 前 30 字，太短 fallback 到 "chat · YYYY-MM-DD HH:mm"
+
+    daily-push 的 kickoff 是系统消息「今天是 X，执行每日推送」，不能拿来作 title。
+    """
+    if trigger_of(thread_id) == "daily-push":
+        return f"每日文献推送 · {started_at_local.date().isoformat()}"
+    for m in messages:
+        if isinstance(m, HumanMessage):
+            content = m.content if isinstance(m.content, str) else str(m.content)
+            stripped = content.strip()
+            if len(stripped) >= 10:
+                return stripped[:30] + ("…" if len(stripped) > 30 else "")
+            break
+    return f"chat · {started_at_local.strftime('%Y-%m-%d %H:%M')}"
+
+
+def set_session_title(
+    thread_id: str, new_title: str, settings: Settings | None = None
+) -> Path | None:
+    """用户手动重命名（M6 P2 / PATCH /sessions/{tid}/title 调）。
+
+    设 title_manually_edited=True，未来 derive_session_md 不会覆盖此 title。
+    返回写入路径；未找到对应 session md 返回 None。
+    """
+    settings = settings or get_settings()
+    md_path = find_existing_by_thread(thread_id, settings)
+    if md_path is None:
+        return None
+    fm, body = _parse_existing(md_path)
+    fm["title"] = new_title.strip() or fm.get("title") or f"chat · {thread_id[:8]}"
+    fm["title_manually_edited"] = True
+    atomic_write(md_path, _render_md(fm, body))
+    _log.info("session_title_updated", thread_id=thread_id, title=fm["title"])
+    return md_path
+
+
 def find_existing_by_thread(thread_id: str, settings: Settings | None = None) -> Path | None:
     """扫 ./memory/sessions/ 找首个 frontmatter.thread_id == thread_id 的 md。
 
@@ -111,6 +154,9 @@ def list_all_sessions(settings: Settings | None = None) -> list[dict[str, Any]]:
                 "topics": fm.get("topics") or [],
                 "related_papers": fm.get("related_papers") or [],
                 "md_path": str(md),
+                # M6 P2 title 字段：老 session md 无此字段时返 None，前端 fallback 时间命名
+                "title": fm.get("title"),
+                "title_manually_edited": bool(fm.get("title_manually_edited", False)),
             }
         )
     items.sort(key=lambda x: str(x.get("last_active_at") or ""), reverse=True)
@@ -228,6 +274,9 @@ def derive_session_md(
         fm["thread_id"] = thread_id
         fm["trigger"] = trigger_of(thread_id)
         fm["started_at"] = now_local.isoformat()
+        # M6 P2 / Q3：仅首次 derive 生成 title；用户手动重命名后 title_manually_edited=True 永锁
+        fm["title"] = _generate_title(thread_id, messages, now_local)
+        fm["title_manually_edited"] = False
     fm["last_active_at"] = now_local.isoformat()
     fm["message_count"] = total
 
