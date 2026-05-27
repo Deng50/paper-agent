@@ -60,11 +60,14 @@ paper_questions:
     query_zh: "枝晶 锂金属"
     query_en: "dendrite suppression lithium metal"
     expected_paper_ids:
-      - openalex-w7161839484  # Quantum-AI suppressing dendrites
-      - openalex-w7161840358  # Piezoelectric Grain Boundaries Dendrite-Free
+      - openalex-w7161839484  # Quantum-AI suppressing dendrites in lithium-metal solid-state
     scope: papers
     difficulty: fuzzy
-    notes: "枝晶 ↔ dendrite 同义；模糊问"
+    notes: |
+      枝晶 ↔ dendrite 同义；模糊问。
+      历史误标修正（M5 P1 ④ 归因发现）：openalex-w7161840358 实为
+      「Adaptive Piezoelectric ... SODIUM Metal Batteries」（钠金属电池，非锂），
+      不属于 B_li_metal_anode_interface 主题，已从 expected_paper_ids 移除（commit log）。
 
   - id: paper_B2
     theme: B_li_metal_anode_interface

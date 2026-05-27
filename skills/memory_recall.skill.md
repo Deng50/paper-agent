@@ -141,17 +141,96 @@ paper.md 结构（在 `./memory/papers/{date}/{paper_id}.md` 内）：
 - frontmatter `title` / `authors` / `abstract` → **英文**
 - frontmatter `reason` + body `## 为什么推荐你` → **中文**（推送时你自己写的总结）
 
-中文 query 主要命中 reason / 为什么推荐你。**实战要并跑英文 + 中文两次
-`search_memory`**：
+中文 query 主要命中 reason / 为什么推荐你。
+
+### 中英双跑硬约束（M5 P1 ④ 归因后强化，**必须执行**）
+
+任务 A 归因报告（60% baseline 失败 67% 属跨语言同义词桶）证实：**只跑中文 query
+会大幅漏掉英文 corpus 命中**。例：
+
+- 用户问「锂金属枝晶」→ 文件 normalized_title = `"lithium-metal solid-state"`
+  + reason = 「树枝晶抑制 + 固态电池」（**没出现"锂金属"连写中文词**）
+  → 中文 query `"锂金属 枝晶"` 0 命中 → 漏掉本该召回的论文 ❌
+
+收到中文 query 时**强制按下面 4 步走**，绝不省略步骤 2-3：
+
+1. **提取核心 token**：去虚词，保留化学式 / 缩写 / 数字（如 `Li6PS5Cl` / `NCM811`
+   / `PVDF` 保留原样，不翻译）
+2. **生成 2-3 条等价英文 query**（用下方对照词表 + 你的领域知识）：
+   - 一条主翻译（如 `锂金属` → `lithium metal`）
+   - 一条变体（带连字符 / 复合词，如 `lithium-metal` / `Li-metal`）
+   - 一条扩展（化学式 / 同义术语，如 `Poly(Vinylidene Fluoride)` 替 `PVDF` 时）
+3. **中文 query 与所有英文 query 都跑一次** `search_memory`（**N+1 次工具调用**：
+   1 次中文 + 2-3 次英文）
+4. **合并 path 去重，按 union 取前 5 个 read_file**（agent 自己 dedup，路径相同
+   只读一次）
+
+跑完后回答时把命中的所有文件路径都列引用。
+
+#### 跨语言 + 术语同义词对照表（**记忆这张表**）
+
+agent 看 prompt 时一次性吃下这张表，避免遗漏跨语言变体：
+
+| 中文 | 英文主翻译 | 英文变体 / 同义术语 |
+|------|-----------|-------------------|
+| 锂金属 / 锂金属电池 | `lithium metal` | `lithium-metal`, `Li-metal`, `Li metal battery` |
+| 锂离子电池 | `lithium-ion battery` | `Li-ion battery`, `LIB` |
+| 锂硫电池 | `lithium-sulfur battery` | `Li-S battery`, `Li–S` |
+| 钠金属 / 钠离子电池 | `sodium-ion battery` | `Na-ion`, `sodium metal battery` |
+| 硫化物 / 硫化物电解质 | `sulfide` | `sulfide electrolyte`, `sulfide-based`, `argyrodite` |
+| 聚合物 / 聚合物电解质 | `polymer` | `polymer electrolyte`, `solid polymer electrolyte`, `SPE` |
+| PVDF | `PVDF` | `Poly(Vinylidene Fluoride)`, `polyvinylidene fluoride` |
+| PEO | `PEO` | `poly(ethylene oxide)`, `polyethylene oxide` |
+| 电解质 | `electrolyte` | `electrolytes` |
+| 固态电解质 | `solid electrolyte` | `solid-state electrolyte`, `SSE`, `all-solid-state` |
+| 固态电池 / 全固态电池 | `solid-state battery` | `all-solid-state battery`, `ASSB`, `solid state battery` |
+| 准固态 | `quasi-solid-state` | `quasi solid state`, `gel polymer electrolyte` |
+| 复合电解质 | `composite electrolyte` | `composite polymer electrolyte`, `hybrid electrolyte` |
+| 界面 / 界面工程 | `interface` | `interphase`, `interface engineering`, `SEI` |
+| 枝晶 / 树枝晶 | `dendrite` | `dendrites`, `dendritic`, `dendrite-free`, `suppressing dendrites` |
+| 锂枝晶 | `lithium dendrite` | `Li dendrite`, `Li-dendrite suppression` |
+| 离子电导率 / 离子电导 | `ionic conductivity` | `ion conductivity`, `Li+ conductivity`, `Li-ion transport` |
+| 离子传输 / 离子输运 | `ion transport` | `ion transfer`, `ionic transfer`, `Li+ transference` |
+| 电导率 | `conductivity` | `conductive`, `electronic conductivity` |
+| 热失控 | `thermal runaway` | `TR`, `thermal-runaway` |
+| 电池热管理 | `battery thermal management` | `BTMS`, `thermal management system` |
+| 电池安全 | `battery safety` | `safety management` |
+| 阳极 / 负极 | `anode` | `anodes`, `negative electrode` |
+| 阴极 / 正极 | `cathode` | `cathodes`, `positive electrode`, `NCM811`, `NCA` |
+| 正极材料 | `cathode material` | `LiFePO4`, `LFP`, `LiCoO2`, `NMC` |
+| 硅阳极 / 硅负极 | `silicon anode` | `Si anode`, `silicon-based anode` |
+| 高熵材料 | `high-entropy material` | `high entropy`, `HEM` |
+| 氯化物电解质 | `chloride electrolyte` | `Li3YCl6`, `halide electrolyte` |
+| 氧化物 / 氧化物电解质 | `oxide electrolyte` | `garnet`, `LLZO`, `NASICON` |
+| 临界电流密度 | `critical current density` | `CCD` |
+| 充放电 / 循环 | `cycling` | `charge-discharge`, `cycling stability`, `capacity retention` |
+| 机器学习 / 人工智能 | `machine learning` | `ML`, `AI`, `deep learning`, `neural network` |
+
+**化学式 / 缩写保留规则**：`Li6PS5Cl` / `NCM811` / `LLZO` / `LFP` / `PVDF` /
+`PEO` / `MOF` / `GNN` 等保留原样，不要翻译、不要意译（这些是英文 + 中文 reason
+都会用的统一记号，单 token 跑一次即可覆盖两个语种）。
+
+#### 标准模板（**逐字按此模式走**）
 
 ```
 # 用户问 "上周那篇硫化物固态电解质用什么表征"
-search_memory(query="硫化物 固态电解质", scope="papers")  # 命中中文 reason
-search_memory(query="sulfide solid electrolyte", scope="papers")  # 命中英文 abstract
-# 合并去重后取前 N 个 read_file
+search_memory(query="硫化物 固态电解质", scope="papers")        # 1. 中文
+search_memory(query="sulfide solid electrolyte", scope="papers") # 2. 英文主
+search_memory(query="sulfide solid-state", scope="papers")       # 3. 英文变体
+
+# 用户问 "之前关于 PVDF 聚合物电解质的论文"
+search_memory(query="PVDF 聚合物 电解质", scope="papers")              # 中文
+search_memory(query="PVDF polymer electrolyte", scope="papers")         # 英文主
+search_memory(query="Poly(Vinylidene Fluoride)", scope="papers")        # 化学全名变体
+
+# 用户问 "锂枝晶抑制策略"
+search_memory(query="锂金属 枝晶", scope="papers")              # 中文
+search_memory(query="lithium metal dendrite", scope="papers")    # 英文主
+search_memory(query="lithium-metal dendrite", scope="papers")    # 连字符变体
 ```
 
-若中文领域词无标准英文翻译只跑中文（依赖 reason 字段）；不确定翻译时只跑中文。
+不在对照表里的领域词用你领域知识翻译；不确定时**多跑一两条候选译法**，宁多勿少
+（grep 不烧 token，多跑几次磁盘 IO 几乎免费）。
 
 ### Token 过滤
 
