@@ -12,6 +12,7 @@ from __future__ import annotations
 import datetime as dt
 import os
 import re
+import tempfile
 from pathlib import Path
 
 from lit_agent.tools.schemas import Paper
@@ -127,9 +128,15 @@ def render_paper_md(paper: Paper, first_pushed_at: dt.datetime) -> str:
 def atomic_write(path: Path, content: str) -> None:
     """原子写：临时文件 + os.replace（要么旧内容、要么新内容，不留半截）。"""
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(content, encoding="utf-8")
-    os.replace(tmp, path)
+    # 独立临时文件避免两个写者共享 *.tmp，造成交叉覆盖/replace 后找不到文件。
+    fd, name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    tmp = Path(name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(content)
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def _read_frontmatter_keys(md_path: Path, keys: set[str]) -> dict[str, str]:
