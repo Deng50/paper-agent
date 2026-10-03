@@ -26,7 +26,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, ToolMessage
 
 import lit_agent.scheduler.jobs as jobs
 from lit_agent.agents.lit_agent import _make_trigger_push_pipeline_tool, build_lit_agent
@@ -145,7 +145,16 @@ def _patch_jobs_for_kickoff_capture(
         async def ainvoke(self, inp: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
             captured["kickoff"] = inp["messages"][0].content
             captured["thread_id"] = config["configurable"]["thread_id"]
-            return {"messages": [AIMessage(content="ok-intro")]}
+            return {
+                "messages": [
+                    ToolMessage(
+                        content=json.dumps({"counts": {"raw": 0, "selected": 0}, "papers": []}),
+                        tool_call_id="search",
+                        name="search_papers_tool",
+                    ),
+                    AIMessage(content="ok-intro"),
+                ]
+            }
 
     monkeypatch.setattr(jobs, "build_lit_agent", lambda **kw: _FakeAgent())
     monkeypatch.setattr(jobs, "AsyncPostgresSaver", _FakeSaver)

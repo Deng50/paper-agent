@@ -23,7 +23,7 @@ import structlog
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -76,8 +76,8 @@ def _extract(result: dict[str, Any]) -> dict[str, Any]:
             details = um.get("input_token_details") or {}
             cache_read += int(details.get("cache_read", 0) or 0)
             cache_creation += int(details.get("cache_creation", 0) or 0)
-            if isinstance(m.content, str) and m.content.strip():
-                intro = m.content.strip()  # 最后一条非空 AI 文本 = 导语
+            if m.text.strip():
+                intro = m.text.strip()  # 最后一条非空 AI 文本 = 导语
     return {
         "counts": counts,
         "papers": papers,
@@ -165,13 +165,26 @@ async def _claim_run(
             return None
         if existing.status == "success" and not force:
             _log.info("daily_push_already_done", run_date=str(run_date))
-            return None
+            return existing.id, "already_done"
         # success+force / failed / partial → 重跑（覆盖既有行）
-        existing.status = "running"
-        existing.error = None
-        existing.triggered_by = triggered_by
-        existing.started_at = dt.datetime.now(dt.UTC)
+        claimed_id = (
+            await s.execute(
+                update(Push)
+                .where(Push.id == existing.id, Push.status == existing.status)
+                .values(
+                    status="running",
+                    error=None,
+                    triggered_by=triggered_by,
+                    started_at=dt.datetime.now(dt.UTC),
+                    finished_at=None,
+                )
+                .returning(Push.id)
+                .execution_options(synchronize_session=False)
+            )
+        ).scalar_one_or_none()
         await s.commit()
+        if claimed_id is None:
+            return None
         _log.info("daily_push_force_rerun" if force else "daily_push_retry", run_date=str(run_date))
         return existing.id, "force" if force else "retry"
     push = Push(user_id=1, run_date=run_date, triggered_by=triggered_by, status="running")
@@ -214,6 +227,8 @@ async def run_daily_push(
     if claim is None:
         return "busy"
     push_id, _ = claim
+    if claim[1] == "already_done":
+        return "already_done"
 
     status = "success"
     error: str | None = None
@@ -247,6 +262,8 @@ async def run_daily_push(
                 config={"configurable": {"thread_id": thread_id}},
             )
         extracted = _extract(result)
+        if not extracted["counts"]:
+            raise RuntimeError("agent 未完成 search_papers：不能将缺少检索结果的推送标记成功")
         papers = extracted["papers"]
         if papers:
             try:
@@ -268,7 +285,7 @@ async def run_daily_push(
     # M6 P1：成功时把结构化 paper list AIMessage append 进 LangGraph state +
     # derive session md。让历史会话列表能看到「每日文献推送 · 日期」，用户可在
     # 该会话继续追问「第 N 篇详细讲一下」等。失败/无 papers 时跳过。
-    if status == "success" and extracted["papers"]:
+    if status in ("success", "partial") and extracted["papers"]:
         try:
             push_msg = _compose_daily_push_message(
                 run_date, extracted["intro"], extracted["papers"]
