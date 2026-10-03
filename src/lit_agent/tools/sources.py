@@ -23,7 +23,7 @@ import time
 import structlog
 
 from lit_agent.core.config import Settings
-from lit_agent.tools.paper_md import extract_arxiv_id, make_paper_id, normalize_title
+from lit_agent.tools.paper_md import extract_arxiv_id, make_paper_id, normalize_doi, normalize_title
 from lit_agent.tools.schemas import Paper, Source
 
 _log = structlog.get_logger("sources")
@@ -61,7 +61,7 @@ def _normalize(source: Source, vp: object) -> Paper | None:
         title = str(getattr(vp, "title", "")).strip()
         if not external_id or not title:
             return None
-        doi = (getattr(vp, "doi", "") or "").strip() or None
+        doi = normalize_doi(getattr(vp, "doi", "")) or None
         return Paper(
             paper_id=make_paper_id(source, external_id),
             source=source,

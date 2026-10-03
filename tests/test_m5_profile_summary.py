@@ -8,7 +8,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from lit_agent.tools.search_papers import _read_profile_summary
+
+
+@pytest.mark.parametrize("frontmatter", ["- item", "plain text", "123"])
+def test_non_mapping_frontmatter_keeps_body(tmp_path: Path, frontmatter: str) -> None:
+    _write_profile(tmp_path, f"---\n{frontmatter}\n---\n画像正文")
+    assert "画像正文" in _read_profile_summary(tmp_path)
 
 
 def _write_profile(memory_dir: Path, body: str) -> None:

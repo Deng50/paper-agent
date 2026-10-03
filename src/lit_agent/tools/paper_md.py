@@ -54,7 +54,24 @@ _WS_RE = re.compile(r"\s+")
 _UNSAFE_ID_RE = re.compile(r"[^a-z0-9.-]+")
 # 所有 C0 控制字符（含 \t \n \r）—— frontmatter 标量必须单行，否则炸 YAML。
 _CTRL_RE = re.compile(r"[\x00-\x1f\x7f]")
-_ARXIV_IN_DOI = re.compile(r"10\.48550/arxiv\.(?P<id>[\w.]+)", re.IGNORECASE)
+_ARXIV_IN_DOI = re.compile(r"10\.48550/arxiv\.(?P<id>[\w./-]+)", re.IGNORECASE)
+
+
+def normalize_doi(doi: str | None) -> str:
+    """DOI identity is case-insensitive and may arrive as a doi.org URL."""
+    return re.sub(
+        r"^(?:https?://(?:dx\.)?doi\.org/|doi:\s*)", "", (doi or "").strip(), flags=re.IGNORECASE
+    ).lower()
+
+
+def normalize_arxiv_id(arxiv_id: str | None) -> str:
+    value = re.sub(
+        r"^(?:https?://arxiv\.org/abs/|arxiv:\s*)",
+        "",
+        (arxiv_id or "").strip(),
+        flags=re.IGNORECASE,
+    )
+    return re.sub(r"v\d+$", "", value.lower())
 
 
 def normalize_title(title: str) -> str:
@@ -72,11 +89,11 @@ def make_paper_id(source: str, external_id: str) -> str:
 
 def extract_arxiv_id(source: str, external_id: str, doi: str | None) -> str | None:
     if source == "arxiv":
-        return external_id
+        return normalize_arxiv_id(external_id)
     if doi:
         m = _ARXIV_IN_DOI.search(doi)
         if m:
-            return m.group("id")
+            return normalize_arxiv_id(m.group("id"))
     return None
 
 
@@ -166,17 +183,17 @@ class DedupIndex:
         self.norm_titles: set[str] = set()
 
     def contains(self, paper: Paper) -> bool:
-        if paper.doi and paper.doi in self.dois:
+        if paper.doi and normalize_doi(paper.doi) in self.dois:
             return True
-        if paper.arxiv_id and paper.arxiv_id in self.arxiv_ids:
+        if paper.arxiv_id and normalize_arxiv_id(paper.arxiv_id) in self.arxiv_ids:
             return True
         return bool(paper.normalized_title) and paper.normalized_title in self.norm_titles
 
     def add(self, paper: Paper) -> None:
         if paper.doi:
-            self.dois.add(paper.doi)
+            self.dois.add(normalize_doi(paper.doi))
         if paper.arxiv_id:
-            self.arxiv_ids.add(paper.arxiv_id)
+            self.arxiv_ids.add(normalize_arxiv_id(paper.arxiv_id))
         if paper.normalized_title:
             self.norm_titles.add(paper.normalized_title)
 
@@ -191,9 +208,9 @@ def load_dedup_index(memory_dir: Path) -> DedupIndex:
     for md in papers_dir.rglob("*.md"):
         fm = _read_frontmatter_keys(md, keys)
         if fm.get("doi"):
-            idx.dois.add(fm["doi"])
+            idx.dois.add(normalize_doi(fm["doi"]))
         if fm.get("arxiv_id"):
-            idx.arxiv_ids.add(fm["arxiv_id"])
+            idx.arxiv_ids.add(normalize_arxiv_id(fm["arxiv_id"]))
         if fm.get("normalized_title"):
             idx.norm_titles.add(fm["normalized_title"])
     return idx

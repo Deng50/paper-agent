@@ -23,13 +23,14 @@ from __future__ import annotations
 import datetime as dt
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import structlog
 import yaml
 
 from lit_agent.core.config import Settings, get_settings
 from lit_agent.tools import sources
-from lit_agent.tools.paper_md import atomic_write, load_dedup_index, render_paper_md
+from lit_agent.tools.paper_md import DedupIndex, atomic_write, load_dedup_index, render_paper_md
 from lit_agent.tools.schemas import Paper
 from lit_agent.tools.scoring import score_papers
 
@@ -40,24 +41,12 @@ TOP_N_CAP = 10  # 每次精选上限（PRD「5–10 篇」）
 
 def _dedup_in_batch(papers: list[Paper]) -> list[Paper]:
     """批内去重：doi > arxiv_id > normalized_title，保留首次出现。"""
-    seen_doi: set[str] = set()
-    seen_arxiv: set[str] = set()
-    seen_title: set[str] = set()
+    seen = DedupIndex()
     out: list[Paper] = []
     for p in papers:
-        if p.doi and p.doi in seen_doi:
-            continue
-        if p.arxiv_id and p.arxiv_id in seen_arxiv:
-            continue
-        if p.normalized_title and p.normalized_title in seen_title:
-            continue
-        out.append(p)
-        if p.doi:
-            seen_doi.add(p.doi)
-        if p.arxiv_id:
-            seen_arxiv.add(p.arxiv_id)
-        if p.normalized_title:
-            seen_title.add(p.normalized_title)
+        if not seen.contains(p):
+            out.append(p)
+        seen.add(p)
     return out
 
 
@@ -90,7 +79,8 @@ def _read_profile_summary(memory_dir: Path) -> str:
     sections: list[str] = []
     if frontmatter_str:
         try:
-            fm: dict[str, Any] = yaml.safe_load(frontmatter_str) or {}
+            parsed = yaml.safe_load(frontmatter_str)
+            fm: dict[str, Any] = parsed if isinstance(parsed, dict) else {}
         except yaml.YAMLError:
             fm = {}
         kw = fm.get("keyword_weights") or {}
@@ -147,7 +137,7 @@ async def search_papers(
     selected = selected[:TOP_N_CAP]
 
     # 6. 原子写（force_rerun 时若 paper.md 已存则 skip，方案 A 字面：不重写已存）
-    now = dt.datetime.now().astimezone()
+    now = dt.datetime.now(ZoneInfo(settings.timezone))
     day = now.date().isoformat()
     saved = 0
     skipped_existing = 0
