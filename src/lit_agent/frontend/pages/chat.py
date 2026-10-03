@@ -22,6 +22,8 @@ from typing import Any
 import httpx
 import streamlit as st
 
+from lit_agent.frontend.sse import parse_sse_events as _parse_sse_events
+
 API_BASE_URL = os.environ.get("API_BASE_URL", "http://localhost:8000")
 API_TOKEN = os.environ.get("API_TOKEN", "")
 _HEADERS = {
@@ -101,33 +103,6 @@ def _load_session_messages(thread_id: str) -> None:
             }
         )
     st.session_state["chat_messages"] = msgs
-
-
-def _parse_sse_events(byte_stream: Iterator[bytes]) -> Iterator[tuple[str, dict[str, Any]]]:
-    """SSE wire parser：按 `\\n\\n` 拆 event block 流式 yield (event_name, data)。"""
-    buffer = ""
-    for chunk in byte_stream:
-        buffer += chunk.decode("utf-8", errors="replace")
-        while "\n\n" in buffer:
-            block, _, buffer = buffer.partition("\n\n")
-            event_name = ""
-            data_lines: list[str] = []
-            for raw_line in block.split("\n"):
-                line = raw_line.rstrip("\r")
-                if line.startswith(":") or not line:
-                    continue
-                if line.startswith("event:"):
-                    event_name = line[6:].strip()
-                elif line.startswith("data:"):
-                    data_lines.append(line[5:].lstrip())
-            if not event_name:
-                continue
-            data_raw = "\n".join(data_lines)
-            try:
-                data = json.loads(data_raw) if data_raw else {}
-            except json.JSONDecodeError:
-                data = {"raw": data_raw}
-            yield event_name, data
 
 
 def _stream_tokens_and_collect(

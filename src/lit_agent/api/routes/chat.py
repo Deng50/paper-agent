@@ -12,11 +12,7 @@ owner 拍板（§6 Q1-3 / Q2.1-4）：
 SSE event 类型（docs/04 §4.1 字面）：meta / tool / token / citation / done。
 keepalive 注释行 15s（docs/04 §9）由独立 asyncio task 喂 queue。
 
-stream_mode 选择：单 "updates"（每节点完成时整段 emit）。**M4 trade-off**：
-stream_mode="messages" 字符级流依赖 ChatAnthropic 实例传 streaming=True，
-而 M3 commit 8c3e68f 的 lit_agent.py:124 未传（M4_to_M5 §5 P1 已登记）；
-故 M4 emit 整段 token（有内容、非字符流），M5 配齐 streaming=True 后可补
-multi-mode 字符级 chunks。
+使用 messages + updates 双模式：messages 立即发送正文增量，updates 提供工具事件与用量。
 """
 
 from __future__ import annotations
@@ -29,7 +25,7 @@ from typing import Any
 
 import structlog
 import yaml
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
@@ -78,10 +74,13 @@ def _last_msg_has_dangling_tool_calls(messages: list[BaseMessage]) -> bool:
     异常），LangGraph 已 commit AIMessage 但 ToolMessage 未生成 → 同 thread
     续问时 LLM provider 报 INVALID_CHAT_HISTORY。
     """
-    if not messages:
-        return False
-    last = messages[-1]
-    return isinstance(last, AIMessage) and bool(last.tool_calls)
+    pending: set[str] = set()
+    for msg in messages:
+        if isinstance(msg, AIMessage):
+            pending.update(str(tc["id"]) for tc in msg.tool_calls)
+        elif isinstance(msg, ToolMessage):
+            pending.discard(msg.tool_call_id)
+    return bool(pending)
 
 
 async def _produce_events(
@@ -114,13 +113,21 @@ async def _produce_events(
             return
 
         seen_msg_ids: set[str] = set()
+        streamed_msg_ids: set[str] = set()
         token_usage = {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0}
 
-        async for state_update in agent.astream(
+        async for mode, event_data in agent.astream(
             {"messages": [user_msg]},
             config=config,
-            stream_mode="updates",
+            stream_mode=["messages", "updates"],
         ):
+            if mode == "messages":
+                chunk, metadata = event_data
+                if metadata.get("langgraph_node") == "agent" and chunk.text:
+                    streamed_msg_ids.add(str(chunk.id))
+                    await queue.put(format_sse_event("token", {"delta": chunk.text}))
+                continue
+            state_update = event_data
             for _node, state_delta in state_update.items():
                 if not isinstance(state_delta, dict):
                     continue
@@ -145,16 +152,8 @@ async def _produce_events(
                         details = um.get("input_token_details") or {}
                         token_usage["cache_read"] += int(details.get("cache_read", 0) or 0)
                         token_usage["cache_creation"] += int(details.get("cache_creation", 0) or 0)
-                        if isinstance(msg.content, str) and msg.content.strip():
-                            await queue.put(format_sse_event("token", {"delta": msg.content}))
-                        elif isinstance(msg.content, list):
-                            for block in msg.content:
-                                if isinstance(block, dict) and block.get("type") == "text":
-                                    block_text = str(block.get("text", "") or "")
-                                    if block_text:
-                                        await queue.put(
-                                            format_sse_event("token", {"delta": block_text})
-                                        )
+                        if str(msg.id) not in streamed_msg_ids and msg.text:
+                            await queue.put(format_sse_event("token", {"delta": msg.text}))
                     elif isinstance(msg, ToolMessage) and msg.name == "read_file_tool":
                         content_text = msg.content if isinstance(msg.content, str) else ""
                         citation = _parse_paper_md_citation(content_text)
@@ -221,6 +220,7 @@ async def _chat_event_stream(
             )
             ka_task = asyncio.create_task(_keepalive_loop(queue))
 
+            messages_list: list[BaseMessage] = []
             try:
                 while True:
                     item = await queue.get()
@@ -228,12 +228,17 @@ async def _chat_event_stream(
                         break
                     yield item
                 snap = await agent.aget_state(config)
-                messages_list: list[BaseMessage] = snap.values.get("messages", []) or []
+                messages_list = snap.values.get("messages", []) or []
             except (asyncio.CancelledError, GeneratorExit):
                 _log.info("chat_stream_cancelled", session_id=session_id)
                 messages_list = []
                 raise
             finally:
+                # 先结束工具/模型任务再关闭 checkpointer，避免任务使用已关闭连接。
+                for task in (main_task, ka_task):
+                    if task is not None and not task.done():
+                        task.cancel()
+                await asyncio.gather(main_task, ka_task, return_exceptions=True)
                 if messages_list:
                     _spawn_derive(session_id, messages_list, settings)
     finally:
@@ -322,4 +327,5 @@ async def get_chat_session_messages(thread_id: str) -> dict[str, Any]:
                 _log.warning("chat_message_serialize_failed", thread_id=thread_id, error=str(exc))
     except Exception as exc:
         _log.warning("chat_session_messages_read_failed", thread_id=thread_id, error=str(exc))
+        raise HTTPException(status_code=503, detail="暂时无法读取会话历史，请稍后重试。") from exc
     return {"thread_id": thread_id, "messages": messages_out, "total": len(messages_out)}
