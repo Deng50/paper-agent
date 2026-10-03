@@ -13,9 +13,12 @@ def test_concurrent_writers_use_independent_temporary_files(
     target = tmp_path / "profile.md"
     barrier = Barrier(2)
     replace = paper_md.os.replace
+    entered: set[Path] = set()
 
     def simultaneous_replace(src: Path, dst: Path) -> None:
-        barrier.wait(timeout=5)
+        if src not in entered:
+            entered.add(src)
+            barrier.wait(timeout=5)
         replace(src, dst)
 
     monkeypatch.setattr(paper_md.os, "replace", simultaneous_replace)

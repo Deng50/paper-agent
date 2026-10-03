@@ -13,6 +13,7 @@ import datetime as dt
 import os
 import re
 import tempfile
+import time
 from pathlib import Path
 
 from lit_agent.tools.schemas import Paper
@@ -151,7 +152,15 @@ def atomic_write(path: Path, content: str) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
             handle.write(content)
-        os.replace(tmp, path)
+        for attempt in range(3):
+            try:
+                os.replace(tmp, path)
+                break
+            except PermissionError:
+                # Windows 同时 replace 同一目标可能短暂返回 sharing/access violation。
+                if os.name != "nt" or attempt == 2:
+                    raise
+                time.sleep(0.01 * (attempt + 1))
     finally:
         tmp.unlink(missing_ok=True)
 
