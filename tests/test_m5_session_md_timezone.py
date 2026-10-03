@@ -34,7 +34,7 @@ def test_session_md_path_utc_input_converts_to_shanghai() -> None:
     utc_dt = dt.datetime(2026, 5, 26, 7, 20, 0, tzinfo=dt.UTC)
     s = _settings(Path("/tmp/fake"))
     path = session_md_path("chat-uuid-1", utc_dt, settings=s)
-    assert path.name == "15-20-chat.md"
+    assert path.name.startswith("15-20-chat-")
     assert path.parent.name == "2026-05-26"
 
 
@@ -43,7 +43,7 @@ def test_session_md_path_naive_input_used_as_is() -> None:
     naive = dt.datetime(2026, 5, 26, 15, 20, 0)
     s = _settings(Path("/tmp/fake"))
     path = session_md_path("chat-uuid-1", naive, settings=s)
-    assert path.name == "15-20-chat.md"
+    assert path.name.startswith("15-20-chat-")
 
 
 def test_session_md_path_daily_push_trigger() -> None:
@@ -51,7 +51,7 @@ def test_session_md_path_daily_push_trigger() -> None:
     utc_dt = dt.datetime(2026, 5, 26, 2, 0, 0, tzinfo=dt.UTC)  # Shanghai 10:00
     s = _settings(Path("/tmp/fake"))
     path = session_md_path("daily_push:2026-05-26", utc_dt, settings=s)
-    assert path.name == "10-00-daily-push.md"
+    assert path.name.startswith("10-00-daily-push-")
 
 
 def test_derive_session_md_writes_local_tz_frontmatter(tmp_path: Path) -> None:
@@ -65,7 +65,7 @@ def test_derive_session_md_writes_local_tz_frontmatter(tmp_path: Path) -> None:
 
     assert path is not None
     # 路径用本地时间命名
-    assert path.name == "15-20-chat.md"
+    assert path.name.startswith("15-20-chat-")
     assert path.parent.name == "2026-05-26"
 
     # frontmatter 含本地时区时间戳
@@ -86,7 +86,7 @@ def test_derive_session_md_handles_naive_now(tmp_path: Path) -> None:
     path = derive_session_md("chat-naive-test", msgs, settings=s, now=naive_now)
 
     assert path is not None
-    assert path.name == "15-20-chat.md"
+    assert path.name.startswith("15-20-chat-")
 
 
 def test_real_world_owner_bug_scenario(tmp_path: Path) -> None:
@@ -103,5 +103,5 @@ def test_real_world_owner_bug_scenario(tmp_path: Path) -> None:
     msgs = [HumanMessage(content="bug 复现")]
     path = derive_session_md("owner-bug", msgs, settings=s, now=utc_equivalent)
     assert path is not None
-    assert path.name == "15-20-chat.md"  # 修复后正确显示北京时间
+    assert path.name.startswith("15-20-chat-")  # 修复后正确显示北京时间
     assert path.name != "07-20-chat.md"  # 不再被 UTC 误导

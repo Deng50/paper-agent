@@ -2,22 +2,21 @@
 
 应用层 helper（不是 agent @tool）：在 /chat 的 SSE done 后由路由调用 +
 scripts/rebuild_session_md.py（M4-4）共享。从 LangGraph state.values["messages"]
-取 message_count 之后的新增 messages，整文件原子重写 session md（frontmatter
-+ 历史正文 + 新追加轮）。复用 tools/paper_md.py::atomic_write。
+全量 messages 派生正文，整文件原子重写 session md。这样 checkpoint 被强制
+重跑或消息替换时不会混入旧正文。复用 tools/paper_md.py::atomic_write。
 
-session md 路径：./memory/sessions/{started_at.date()}/{HH-MM}-{trigger}.md
+session md 路径：./memory/sessions/{started_at.date()}/{HH-MM}-{trigger}-{thread_hash}.md
 - started_at 首次写时 = datetime.now()，存入 frontmatter；后续读 frontmatter
 - trigger：thread_id 前缀 "daily_push:" → daily-push；否则 chat（jobs.py:150 /
   sessions.py:43 既成规则；handover §3.5 字面）
 
-新轮边界：frontmatter `message_count` 作 prev_count 指针，
-snap.values["messages"][prev_count:] = 新增（Q2.4 owner 拍板，独立于 LangGraph
-checkpoint 内部 API）。
+老路径仍按 frontmatter.thread_id 查找并原位更新；新文件加 thread hash 防同分钟碰撞。
 """
 
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -45,7 +44,7 @@ def session_md_path(
     started_at: dt.datetime,
     settings: Settings | None = None,
 ) -> Path:
-    """计算 session md 路径：./memory/sessions/{date}/{HH-MM}-{trigger}.md。
+    """计算含 thread hash 的唯一 session md 路径。
 
     日期 / HH-MM 用 `settings.timezone`（默认 Asia/Shanghai）；M5 修复前用 UTC
     导致北京 15:20 文件名变 07-20-chat.md（差 8 小时）。tz-aware 输入 → astimezone
@@ -59,7 +58,8 @@ def session_md_path(
     date_str = local.date().isoformat()
     hm_str = local.strftime("%H-%M")
     trig = trigger_of(thread_id)
-    return settings.memory_dir / "sessions" / date_str / f"{hm_str}-{trig}.md"
+    thread_suffix = hashlib.sha256(thread_id.encode("utf-8")).hexdigest()[:16]
+    return settings.memory_dir / "sessions" / date_str / f"{hm_str}-{trig}-{thread_suffix}.md"
 
 
 def _generate_title(
@@ -144,13 +144,17 @@ def list_all_sessions(settings: Settings | None = None) -> list[dict[str, Any]]:
         tid = fm.get("thread_id")
         if not tid:
             continue
+        try:
+            message_count = int(fm.get("message_count", 0) or 0)
+        except (TypeError, ValueError):
+            continue
         items.append(
             {
                 "thread_id": tid,
                 "trigger": fm.get("trigger") or trigger_of(str(tid)),
                 "started_at": fm.get("started_at"),
                 "last_active_at": fm.get("last_active_at"),
-                "message_count": int(fm.get("message_count", 0) or 0),
+                "message_count": message_count,
                 "topics": fm.get("topics") or [],
                 "related_papers": fm.get("related_papers") or [],
                 "md_path": str(md),
@@ -188,7 +192,7 @@ def _extract_related_papers(messages: list[BaseMessage]) -> list[str]:
         for tc in msg.tool_calls or []:
             if tc.get("name") != "read_file_tool":
                 continue
-            path = (tc.get("args") or {}).get("path", "")
+            path = str((tc.get("args") or {}).get("path", "")).replace("\\", "/")
             if "/papers/" not in path:
                 continue
             pid = Path(path).stem
@@ -212,7 +216,7 @@ def _render_messages(messages: list[BaseMessage]) -> str:
             parts.append(content.strip())
         elif isinstance(msg, AIMessage):
             parts.append("### 助手")
-            text = msg.content if isinstance(msg.content, str) else ""
+            text = msg.text
             if text.strip():
                 parts.append(text.strip())
             for tc in msg.tool_calls or []:
@@ -246,9 +250,8 @@ def derive_session_md(
 ) -> Path | None:
     """每轮 done 后从 messages 派生写 session md。返回写入路径；无新增返回 None。
 
-    新轮边界 = 旧 frontmatter.message_count 作 prev_count；slice messages[prev:]。
-    frontmatter 同步：last_active_at / message_count 每轮；related_papers 每 5 轮
-    或首次写时同步；topics 占位 [] 留 M5/M6 关键词提取。
+    从完整 checkpoint 重建正文；保留 started_at 与手动标题。
+    每轮同步 last_active_at / message_count / related_papers；无变化时不写。
     """
     settings = settings or get_settings()
     now = now or dt.datetime.now(dt.UTC)
@@ -264,11 +267,11 @@ def derive_session_md(
     md_path = existing_path or session_md_path(thread_id, now_local, settings=settings)
 
     fm, body = _parse_existing(md_path)
-    prev_count = int(fm.get("message_count", 0) or 0)
-    if total <= prev_count:
+    # checkpoint 是唯一事实来源；force rerun/消息替换可能保持甚至缩短消息数量。
+    # 全量派生不会把新旧两轮混在一起，也能修复已有正文损坏。
+    full_body = _render_messages(messages)
+    if body.strip() == full_body.strip() and fm.get("message_count") == total:
         return None
-
-    new_msgs = messages[prev_count:]
 
     if not fm.get("started_at"):
         fm["thread_id"] = thread_id
@@ -280,20 +283,15 @@ def derive_session_md(
     fm["last_active_at"] = now_local.isoformat()
     fm["message_count"] = total
 
-    if total % 5 == 0 or "related_papers" not in fm:
-        fm["related_papers"] = _extract_related_papers(messages)
+    fm["related_papers"] = _extract_related_papers(messages)
     fm.setdefault("topics", [])
 
-    new_seg = _render_messages(new_msgs)
-    full_body = (body.rstrip() + "\n\n" + new_seg).strip() if body.strip() else new_seg
     md_content = _render_md(fm, full_body)
     atomic_write(md_path, md_content)
     _log.info(
         "session_md_derived",
         thread_id=thread_id,
         path=str(md_path),
-        prev_count=prev_count,
-        new_count=len(new_msgs),
         total=total,
     )
     return md_path

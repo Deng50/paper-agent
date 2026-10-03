@@ -277,3 +277,7 @@ def atomic_write(path, content):
 
 > **v0.4 已删除清单**：❌ `messages` 表　❌ `sessions` 表　❌ `locks` 表　❌ `job_logs`/`events` 表　❌ Chroma/Redis/LangMem（v0.2/v0.3 已删，保持）。
 > **下一步**：进入 [Step 4：API 接口设计](./04_api_design.md)。
+
+### 2026-10 归档完整性修复
+
+新建 session 文件名使用 `{HH-MM}-{trigger}-{thread_id 的 SHA256 前16位}.md`，避免同一分钟新建多个会话互相覆盖。已有旧文件继续按 frontmatter.thread_id 原位查找。正文从完整 checkpoint messages 原子派生，支持强制重跑后消息数变少或内容替换；手动标题和首次开始时间保留。related_papers 每轮刷新。
