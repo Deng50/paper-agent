@@ -19,6 +19,7 @@ import asyncio
 import datetime as dt
 import os
 import time
+from typing import Any
 
 import structlog
 
@@ -81,32 +82,41 @@ def _normalize(source: Source, vp: object) -> Paper | None:
         return None
 
 
-def _search_sync(source: Source, query: str, limit: int) -> list[Paper]:
+def _search_sync(
+    source: Source, query: str, limit: int, outcomes: list[bool] | None = None
+) -> list[Paper]:
     """同步调 vendored search()（带日期排序），归一化。错误隔离。"""
     t0 = time.perf_counter()
+    searcher: Any = None
     try:
         if source == "arxiv":
             from paper_search_mcp.academic_platforms.arxiv import ArxivSearcher
 
-            raw = ArxivSearcher().search(
+            searcher = ArxivSearcher()
+            raw = searcher.search(
                 query, max_results=limit, sort_by="submittedDate", sort_order="descending"
             )
         elif source == "crossref":
             from paper_search_mcp.academic_platforms.crossref import CrossRefSearcher
 
-            raw = CrossRefSearcher().search(
-                query, max_results=limit, sort="published", order="desc"
-            )
+            searcher = CrossRefSearcher()
+            raw = searcher.search(query, max_results=limit, sort="published", order="desc")
         elif source == "openalex":
             from paper_search_mcp.academic_platforms.openalex import OpenAlexSearcher
 
-            raw = OpenAlexSearcher().search(query, max_results=limit, sort="publication_date:desc")
+            searcher = OpenAlexSearcher()
+            raw = searcher.search(query, max_results=limit, sort="publication_date:desc")
         elif source == "s2":
             from paper_search_mcp.academic_platforms.semantic import SemanticSearcher
 
-            raw = SemanticSearcher().search(query, max_results=limit, sort="publicationDate:desc")
+            searcher = SemanticSearcher()
+            raw = searcher.search(query, max_results=limit, sort="publicationDate:desc")
         else:  # pragma: no cover - Source 已穷举
             return []
+        if getattr(searcher, "last_error", None):
+            raise RuntimeError(searcher.last_error)
+        if outcomes is not None:
+            outcomes.append(True)
         papers = [p for vp in (raw or []) if (p := _normalize(source, vp)) is not None]
         _log.info(
             "source_ok",
@@ -118,22 +128,31 @@ def _search_sync(source: Source, query: str, limit: int) -> list[Paper]:
         )
         return papers
     except Exception as exc:  # 单源失败不阻塞其余（PRD：单源关闭仍完成）
+        if outcomes is not None:
+            outcomes.append(False)
         _log.warning("source_failed", source=source, query=query, error=str(exc))
         return []
+    finally:
+        if searcher is not None:
+            searcher.session.close()
 
 
-async def _fetch_concurrent(source: Source, queries: list[str], limit: int) -> list[Paper]:
+async def _fetch_concurrent(
+    source: Source, queries: list[str], limit: int, outcomes: list[bool]
+) -> list[Paper]:
     results = await asyncio.gather(
-        *(asyncio.to_thread(_search_sync, source, q, limit) for q in queries)
+        *(asyncio.to_thread(_search_sync, source, q, limit, outcomes) for q in queries)
     )
     return [p for batch in results for p in batch]
 
 
-async def _fetch_s2_serial(queries: list[str], limit: int, limiter: RateLimiter) -> list[Paper]:
+async def _fetch_s2_serial(
+    queries: list[str], limit: int, limiter: RateLimiter, outcomes: list[bool]
+) -> list[Paper]:
     out: list[Paper] = []
     for q in queries:
         await limiter.wait()  # 保证 S2 不在同一秒发第二个请求
-        out.extend(await asyncio.to_thread(_search_sync, "s2", q, limit))
+        out.extend(await asyncio.to_thread(_search_sync, "s2", q, limit, outcomes))
     return out
 
 
@@ -142,11 +161,16 @@ async def fetch_all(queries: list[str], limit_per_query: int, settings: Settings
     # 把 S2 key 桥接到 vendored 代码读的环境变量名（不打印 key）。
     os.environ["SEMANTIC_SCHOLAR_API_KEY"] = settings.semantic_scholar_api_key
 
+    if not queries or not any(q.strip() for q in queries):
+        raise ValueError("至少需要一个非空检索词")
+    outcomes: list[bool] = []
     limiter = RateLimiter(settings.s2_min_interval_s)
     arxiv, crossref, openalex, s2 = await asyncio.gather(
-        _fetch_concurrent("arxiv", queries, limit_per_query),
-        _fetch_concurrent("crossref", queries, limit_per_query),
-        _fetch_concurrent("openalex", queries, limit_per_query),
-        _fetch_s2_serial(queries, limit_per_query, limiter),
+        _fetch_concurrent("arxiv", queries, limit_per_query, outcomes),
+        _fetch_concurrent("crossref", queries, limit_per_query, outcomes),
+        _fetch_concurrent("openalex", queries, limit_per_query, outcomes),
+        _fetch_s2_serial(queries, limit_per_query, limiter, outcomes),
     )
+    if outcomes and not any(outcomes):
+        raise RuntimeError("全部学术源检索失败，请检查网络、API 密钥及限流状态")
     return [*arxiv, *crossref, *openalex, *s2]

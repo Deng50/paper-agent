@@ -51,3 +51,7 @@
 - **S2 无 key 回退**：`SemanticSearcher.get_api_key()` 在无 key 时回退匿名访问（限流重）。
   **本项目不 patch 它**——改为在我方 `Settings` 层强制 `SEMANTIC_SCHOLAR_API_KEY`
   必填（fail-fast），运行时始终注入 key，使该回退分支成为死代码。
+
+## P4 · 区分搜索失败和零匹配（2026-10）
+
+四个已接入源的 search() 保持 list 返回契约，同时在请求失败时设置实例 last_error，成功请求则为 None。sources.py 读取此字段：单源失败仍隔离，全部请求失败向上抛错，避免全源离线被记为成功的零篇推送。实例 HTTP session 在调用结束时关闭。测试使用 mock 请求，不访问外部服务。

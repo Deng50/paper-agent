@@ -293,6 +293,7 @@ class SemanticSearcher(PaperSource):
             List[Paper]: List of paper objects
         """
         papers = []
+        self.last_error = None  # PATCH(lit-agent): distinguish failure from no matches.
 
         try:
             fields = [
@@ -333,6 +334,7 @@ class SemanticSearcher(PaperSource):
             # Check for errors
             if isinstance(response, dict) and "error" in response:
                 error_msg = response.get("message", "Unknown error")
+                self.last_error = error_msg  # PATCH(lit-agent)
                 if response.get("error") == "rate_limited":
                     logger.error(f"Rate limited by Semantic Scholar API: {error_msg}")
                 else:
@@ -342,6 +344,7 @@ class SemanticSearcher(PaperSource):
             # Check response status code
             if not hasattr(response, "status_code") or response.status_code != 200:
                 status_code = getattr(response, "status_code", "unknown")
+                self.last_error = f"Semantic Scholar HTTP {status_code}"  # PATCH(lit-agent)
                 logger.error(
                     f"Semantic Scholar search failed with status {status_code}"
                 )
@@ -368,6 +371,7 @@ class SemanticSearcher(PaperSource):
 
         except Exception as e:
             logger.error(f"Semantic Scholar search error: {e}")
+            self.last_error = str(e)  # PATCH(lit-agent)
 
         return papers[:max_results]
 

@@ -37,6 +37,7 @@ class CrossRefSearcher(PaperSource):
         Returns:
             List of Paper objects
         """
+        self.last_error = None  # PATCH(lit-agent): distinguish failure from no matches.
         try:
             params = {
                 'query': query,
@@ -83,9 +84,11 @@ class CrossRefSearcher(PaperSource):
             return papers
             
         except requests.RequestException as e:
+            self.last_error = str(e)  # PATCH(lit-agent)
             logger.error(f"Error searching CrossRef: {e}")
             return []
         except Exception as e:
+            self.last_error = str(e)  # PATCH(lit-agent)
             logger.error(f"Unexpected error in CrossRef search: {e}")
             return []
     

@@ -56,6 +56,7 @@ class OpenAlexSearcher(PaperSource):
             List[Paper]: List of found papers with metadata.
         """
         papers = []
+        self.last_error = None  # PATCH(lit-agent): expose source failure to caller.
 
         try:
             params = {
@@ -68,6 +69,7 @@ class OpenAlexSearcher(PaperSource):
             response = self.session.get(self.BASE_URL, params=params, timeout=30)
             
             if response.status_code != 200:
+                self.last_error = f"OpenAlex HTTP {response.status_code}"  # PATCH(lit-agent)
                 logger.error(f"OpenAlex search failed with status {response.status_code}")
                 return papers
 
@@ -156,6 +158,7 @@ class OpenAlexSearcher(PaperSource):
 
         except Exception as e:
             logger.error(f"OpenAlex search error: {e}")
+            self.last_error = str(e)  # PATCH(lit-agent)
 
         return papers
 

@@ -24,6 +24,7 @@ class ArxivSearcher(PaperSource):
         })
 
     def search(self, query: str, max_results: int = 10, sort_by: str = 'relevance', sort_order: str = 'descending') -> List[Paper]:
+        self.last_error = None  # PATCH(lit-agent): distinguish empty results from failed search.
         params = {
             'search_query': f'all:{query}',
             'max_results': max_results,
@@ -45,6 +46,7 @@ class ArxivSearcher(PaperSource):
             break
 
         if response is None or response.status_code != 200:
+            self.last_error = "arXiv request failed"  # PATCH(lit-agent)
             return []
 
         feed = feedparser.parse(response.content)
