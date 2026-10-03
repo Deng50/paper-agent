@@ -59,3 +59,7 @@
 ## P5 · 可选连接器元数据契约（2026-10）
 
 HAL、Zenodo、SSRN 原先将作者作为字符串、日期作为字符串传给 Paper，导致作者逐字符连接、非空日期序列化崩溃。现保留作者列表，日期转为 datetime / None；SSRN 修正 abstract_id URL 提取并使用稳定的 SHA-256 兜底 ID。由主项目 tests/test_vendor_optional_metadata.py 离线验证。这些连接器仍未接入主应用的四源检索流程。
+
+## P6 · OAI-PMH XML 叶节点解析（2026-10）
+
+OAIPMHSearcher 原先用 `element or fallback` / `if element` 判断 XML 节点存在性，叶节点被误判为空，丢失标题、日期、描述、语言等字段。改为显式 `is not None`，正确读取 metadata 下的 DC 包装节点，并允许精确 paper_id 匹配以支持下载时定位。tests/test_vendor_oai_metadata.py 使用本地 XML 验证，不声明 BASE 远程端点可用。

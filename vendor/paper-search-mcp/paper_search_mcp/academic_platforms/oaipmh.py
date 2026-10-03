@@ -34,6 +34,12 @@ def _register_namespaces():
 _register_namespaces()
 
 
+def _dc_element(root: ET.Element, name: str) -> Optional[ET.Element]:
+    """PATCH(lit-agent): XML leaf elements are falsey even when they exist."""
+    found = root.find(f'{{{DC_NS}}}{name}')
+    return found if found is not None else root.find(name)
+
+
 class OAIPMHSearcher(PaperSource):
     """Base searcher for OAI-PMH compatible repositories.
 
@@ -199,24 +205,22 @@ class OAIPMHSearcher(PaperSource):
                 return None
 
             # Dublin Core elements
-            dc_root = metadata.find(f'.//{{{DC_NS}}}')
+            # PATCH(lit-agent): the wrapper is oai_dc:dc, not the dc terms namespace.
+            dc_root = next(iter(metadata), None)
             if dc_root is None:
-                # Try without namespace
-                dc_root = metadata.find('.//')
-                if dc_root is None:
-                    return None
+                return None
 
             # Extract Dublin Core fields
-            title_elem = dc_root.find(f'{{{DC_NS}}}title') or dc_root.find('title')
+            title_elem = _dc_element(dc_root, 'title')
             title = title_elem.text if title_elem is not None else ''
 
             author_elems = dc_root.findall(f'{{{DC_NS}}}creator') or dc_root.findall('creator')
             authors = [elem.text for elem in author_elems if elem.text]
 
-            description_elem = dc_root.find(f'{{{DC_NS}}}description') or dc_root.find('description')
+            description_elem = _dc_element(dc_root, 'description')
             abstract = description_elem.text if description_elem is not None else ''
 
-            date_elem = dc_root.find(f'{{{DC_NS}}}date') or dc_root.find('date')
+            date_elem = _dc_element(dc_root, 'date')
             date_str = date_elem.text if date_elem is not None else ''
             published_date = self._parse_date(date_str)
 
@@ -235,7 +239,7 @@ class OAIPMHSearcher(PaperSource):
 
             # Build URL - use identifier if it's a URL, otherwise construct
             url = ''
-            if identifier_elem and identifier_elem.text:
+            if identifier_elem is not None and identifier_elem.text:
                 if identifier_elem.text.startswith(('http://', 'https://')):
                     url = identifier_elem.text
                 else:
@@ -289,22 +293,22 @@ class OAIPMHSearcher(PaperSource):
             paper.categories = [elem.text for elem in subject_elems if elem.text]
 
         # Extract publisher
-        publisher_elem = dc_root.find(f'{{{DC_NS}}}publisher') or dc_root.find('publisher')
-        if publisher_elem and publisher_elem.text:
+        publisher_elem = _dc_element(dc_root, 'publisher')
+        if publisher_elem is not None and publisher_elem.text:
             if not paper.extra:
                 paper.extra = {}
             paper.extra['publisher'] = publisher_elem.text
 
         # Extract language
-        language_elem = dc_root.find(f'{{{DC_NS}}}language') or dc_root.find('language')
-        if language_elem and language_elem.text:
+        language_elem = _dc_element(dc_root, 'language')
+        if language_elem is not None and language_elem.text:
             if not paper.extra:
                 paper.extra = {}
             paper.extra['language'] = language_elem.text
 
         # Extract type
-        type_elem = dc_root.find(f'{{{DC_NS}}}type') or dc_root.find('type')
-        if type_elem and type_elem.text:
+        type_elem = _dc_element(dc_root, 'type')
+        if type_elem is not None and type_elem.text:
             if not paper.extra:
                 paper.extra = {}
             paper.extra['type'] = type_elem.text
@@ -373,7 +377,8 @@ class OAIPMHSearcher(PaperSource):
             True if paper matches query
         """
         query_lower = query.lower()
-        return (query_lower in paper.title.lower() or
+        return (query_lower == paper.paper_id.lower() or
+                query_lower in paper.title.lower() or
                 query_lower in paper.abstract.lower() or
                 any(query_lower in author.lower() for author in paper.authors))
 
