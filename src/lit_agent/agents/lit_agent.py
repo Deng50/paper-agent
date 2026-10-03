@@ -189,6 +189,7 @@ def _make_trigger_push_pipeline_tool(settings: Settings, chat_session_id: str | 
                 triggered_by="chat_rerun",
                 force=True,
                 topic_override=topic_override,
+                active_chat_thread_id=chat_session_id,
                 settings=settings,
                 session_factory=factory,
             )

@@ -73,3 +73,44 @@ def test_atomic_claim_rejects_lost_retry_race() -> None:
     assert asyncio.run(jobs._claim_run(session, dt.date(2026, 10, 3), "retry")) is None
     sql = str(session.execute.await_args_list[1].args[0])
     assert "pushes.status =" in sql and "RETURNING pushes.id" in sql
+
+
+def test_rerun_inside_daily_chat_preserves_active_checkpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = "daily_push:2026-10-03"
+    agent = SimpleNamespace(
+        ainvoke=AsyncMock(
+            return_value={
+                "messages": [
+                    ToolMessage(
+                        content=json.dumps({"counts": {"raw": 0, "selected": 0}, "papers": []}),
+                        name="search_papers_tool",
+                        tool_call_id="search",
+                    )
+                ]
+            }
+        )
+    )
+    saver = AsyncMock()
+    saver_cm = AsyncMock()
+    saver_cm.__aenter__.return_value = saver
+    monkeypatch.setattr(jobs.AsyncPostgresSaver, "from_conn_string", lambda *args: saver_cm)
+    monkeypatch.setattr(jobs, "build_lit_agent", lambda **kwargs: agent)
+    session = AsyncMock()
+    session.__aenter__.return_value = session
+    session.get.return_value = SimpleNamespace()
+    monkeypatch.setattr(jobs, "_claim_run", AsyncMock(return_value=(1, "force")))
+    status = asyncio.run(
+        jobs.run_daily_push(
+            force=True,
+            run_date_override=dt.date(2026, 10, 3),
+            active_chat_thread_id=target,
+            session_factory=lambda: session,
+        )
+    )
+    assert status == "success"
+    worker = agent.ainvoke.await_args.kwargs["config"]["configurable"]["thread_id"]
+    assert worker.startswith("push_worker:")
+    assert worker != target
+    saver.adelete_thread.assert_awaited_once_with(worker)

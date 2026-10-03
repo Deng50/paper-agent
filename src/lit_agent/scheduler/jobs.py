@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import uuid
 from collections import defaultdict
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -207,6 +208,7 @@ async def run_daily_push(
     force: bool = False,
     run_date_override: dt.date | None = None,
     topic_override: str | None = None,
+    active_chat_thread_id: str | None = None,
 ) -> str:
     """执行一次每日推送。返回状态字符串：busy/already_done/success/partial/failed。
 
@@ -221,6 +223,11 @@ async def run_daily_push(
     factory = session_factory or get_session_factory()
     run_date = run_date_override or _run_date(settings)
     thread_id = f"daily_push:{run_date.isoformat()}"
+    nested_rerun = thread_id == active_chat_thread_id
+    if nested_rerun:
+        # 用户正在该 daily-push thread 对话：不可清掉正在执行工具节点的 checkpoint。
+        # 临时 thread 只负责重新检索，结果经 ToolMessage 回到原 chat 并由 chat 自己归档。
+        thread_id = f"push_worker:{run_date.isoformat()}:{uuid.uuid4()}"
 
     async with factory() as s:
         claim = await _claim_run(s, run_date, triggered_by, force=force)
@@ -246,7 +253,7 @@ async def run_daily_push(
             # force=True 时清同 thread_id checkpoint，破 handover §3.9 复用屏障，
             # 让 agent 重新调 search_papers（保留 dedup_against_memory=True 历史去重，
             # 让 search 只返回真正未推过的新候选；docs/04 §8.1 方案 B 字面）。
-            if force:
+            if force and not nested_rerun:
                 await saver.adelete_thread(thread_id)
                 _log.info("daily_push_force_clear_checkpoint", thread_id=thread_id)
             agent = build_lit_agent(checkpointer=saver, settings=settings)
@@ -257,10 +264,14 @@ async def run_daily_push(
                     f"\n本次重新检索主题（chat 用户指定，优先用此方向生成英文检索词）："
                     f"{topic_override}"
                 )
-            result = await agent.ainvoke(
-                {"messages": [HumanMessage(content=kickoff)]},
-                config={"configurable": {"thread_id": thread_id}},
-            )
+            try:
+                result = await agent.ainvoke(
+                    {"messages": [HumanMessage(content=kickoff)]},
+                    config={"configurable": {"thread_id": thread_id}},
+                )
+            finally:
+                if nested_rerun:
+                    await saver.adelete_thread(thread_id)
         extracted = _extract(result)
         if not extracted["counts"]:
             raise RuntimeError("agent 未完成 search_papers：不能将缺少检索结果的推送标记成功")
@@ -285,7 +296,7 @@ async def run_daily_push(
     # M6 P1：成功时把结构化 paper list AIMessage append 进 LangGraph state +
     # derive session md。让历史会话列表能看到「每日文献推送 · 日期」，用户可在
     # 该会话继续追问「第 N 篇详细讲一下」等。失败/无 papers 时跳过。
-    if status in ("success", "partial") and extracted["papers"]:
+    if status in ("success", "partial") and extracted["papers"] and not nested_rerun:
         try:
             push_msg = _compose_daily_push_message(
                 run_date, extracted["intro"], extracted["papers"]
