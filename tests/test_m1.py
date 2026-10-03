@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -31,8 +32,12 @@ def test_status_bad_token_rejected(client: TestClient) -> None:
     assert resp.status_code == 401
 
 
-def test_status_shape_with_auth(client: TestClient) -> None:
+def test_status_shape_with_auth(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     # 不依赖真实 PG/Anthropic：仅校验响应结构与四项检查存在。
+    from lit_agent.api.routes import system
+
+    monkeypatch.setattr(system, "_check_postgres", AsyncMock(return_value=system.Check(ok=True)))
+    monkeypatch.setattr(system, "_check_anthropic", AsyncMock(return_value=system.Check(ok=True)))
     resp = client.get("/api/v1/status", headers={"Authorization": "Bearer test-token-123"})
     assert resp.status_code == 200
     body = resp.json()

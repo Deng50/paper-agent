@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import json
+import os
 import sys
 from collections.abc import Coroutine
 from typing import Any
@@ -36,7 +37,7 @@ def _run[T](coro: Coroutine[Any, Any, T]) -> T:
     return asyncio.run(coro)
 
 
-_PG_URL = "postgresql+psycopg://lit:lit@localhost:5432/lit_agent"
+_PG_URL = os.environ.get("TEST_DATABASE_URL", "")
 _TEST_DATE = dt.date(2099, 1, 1)
 _TEST_PAPER = "arxiv-test-9999"
 
@@ -93,6 +94,12 @@ class _FakeSaver:
 
 async def _make_factory() -> tuple[object, async_sessionmaker]:
     """连 docker PG，确保 schema + user(id=1)，返回 (engine, factory)。不可达则跳过。"""
+    if not _PG_URL:
+        pytest.skip("TEST_DATABASE_URL 未设置，跳过真实数据库集成测试")
+    from sqlalchemy.engine import make_url
+
+    if not (make_url(_PG_URL).database or "").endswith("_test"):
+        pytest.fail("TEST_DATABASE_URL 必须指向以 _test 结尾的独立测试库")
     engine = create_async_engine(_PG_URL)
     try:
         async with engine.begin() as conn:

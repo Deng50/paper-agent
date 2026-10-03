@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import os
 import sys
 from collections.abc import Coroutine
 from decimal import Decimal
@@ -28,7 +29,7 @@ from lit_agent.db.base import Base
 from lit_agent.db.models import Feedback, User
 from lit_agent.scheduler.jobs import _format_feedback_log_lines, derive_feedback_logs
 
-_PG_URL = "postgresql+psycopg://lit:lit@localhost:5432/lit_agent"
+_PG_URL = os.environ.get("TEST_DATABASE_URL", "")
 _TEST_PAPERS = ("arxiv-m5fbtest-1", "arxiv-m5fbtest-2", "arxiv-m5fbtest-3")
 
 
@@ -98,6 +99,12 @@ def test_format_empty_input() -> None:
 
 
 async def _make_factory_and_cleanup() -> tuple[Any, async_sessionmaker]:
+    if not _PG_URL:
+        pytest.skip("TEST_DATABASE_URL 未设置，跳过真实数据库集成测试")
+    from sqlalchemy.engine import make_url
+
+    if not (make_url(_PG_URL).database or "").endswith("_test"):
+        pytest.fail("TEST_DATABASE_URL 必须指向以 _test 结尾的独立测试库")
     engine = create_async_engine(_PG_URL)
     try:
         async with engine.begin() as conn:
