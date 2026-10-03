@@ -6,14 +6,15 @@ M3：触发每日推送、列出 daily-push 会话、展示精选论文卡片并
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
 import httpx
 import streamlit as st
 
-API_BASE_URL = os.environ.get("API_BASE_URL", "http://localhost:8000")
-API_TOKEN = os.environ.get("API_TOKEN", "")
+from lit_agent.frontend.config import settings
+
+API_BASE_URL = settings.api_base_url
+API_TOKEN = settings.api_token
 _HEADERS = {"Authorization": f"Bearer {API_TOKEN}"}
 
 st.set_page_config(page_title="文献情报 Agent", page_icon="📚")

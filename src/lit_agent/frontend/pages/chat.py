@@ -15,17 +15,17 @@ PR-2 Bug 2 改造（owner 8 条能力清单 + 我之前 plan 细节 1/2）：
 from __future__ import annotations
 
 import json
-import os
 from collections.abc import Iterator
 from typing import Any
 
 import httpx
 import streamlit as st
 
+from lit_agent.frontend.config import settings
 from lit_agent.frontend.sse import parse_sse_events as _parse_sse_events
 
-API_BASE_URL = os.environ.get("API_BASE_URL", "http://localhost:8000")
-API_TOKEN = os.environ.get("API_TOKEN", "")
+API_BASE_URL = settings.api_base_url
+API_TOKEN = settings.api_token
 _HEADERS = {
     "Authorization": f"Bearer {API_TOKEN}",
     "Accept": "text/event-stream",
