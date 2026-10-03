@@ -23,7 +23,7 @@ from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
 
 from lit_agent.core.config import Settings, get_settings
-from lit_agent.tools.memory import list_dir, read_file, search_memory, write_file
+from lit_agent.tools.memory import Scope, list_dir, read_file, search_memory, write_file
 from lit_agent.tools.search_papers import search_papers
 
 if TYPE_CHECKING:
@@ -105,9 +105,9 @@ def read_file_tool(path: str) -> str:
 
 
 @tool
-def search_memory_tool(query: str, scope: str = "papers") -> str:
+def search_memory_tool(query: str, scope: Scope = "papers") -> str:
     """在 ./memory/{scope} 的 markdown 里 grep 检索（scope: papers/sessions/profile/feedback/all）。"""
-    hits = search_memory(query, scope=scope)  # type: ignore[arg-type]
+    hits = search_memory(query, scope=scope)
     return json.dumps(hits, ensure_ascii=False)
 
 

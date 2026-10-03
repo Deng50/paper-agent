@@ -88,3 +88,34 @@ def test_search_memory_grep_hit_and_scope(tmp_path: Path) -> None:
     assert memory.search_memory("graphene battery", scope="papers", settings=s) == []
     # 错误 scope 目录不存在 → 空，不报错
     assert memory.search_memory("sulfide", scope="sessions", settings=s) == []
+
+
+@pytest.mark.parametrize("scope", ["..", "../skills", "/", "papers/../../"])
+def test_search_rejects_scope_traversal(tmp_path: Path, scope: str) -> None:
+    s = _settings(tmp_path)
+    (tmp_path / "secret.md").write_text("private key", encoding="utf-8")
+    with pytest.raises(PathNotAllowed):
+        memory.search_memory("private", scope=scope, settings=s)  # type: ignore[arg-type]
+
+
+def test_search_feedback_logs_and_zero_limit(tmp_path: Path) -> None:
+    s = _settings(tmp_path)
+    logs = s.memory_dir / "feedback"
+    logs.mkdir()
+    (logs / "2026-10-03.log").write_text("up | arxiv-123 | +1", encoding="utf-8")
+    assert len(memory.search_memory("arxiv-123", scope="feedback", settings=s)) == 1
+    assert len(memory.search_memory("arxiv-123", scope="all", settings=s)) == 1
+    assert memory.search_memory("arxiv-123", scope="all", limit=0, settings=s) == []
+
+
+def test_search_skips_symlink_outside_root(tmp_path: Path) -> None:
+    s = _settings(tmp_path)
+    secret = tmp_path / "secret.md"
+    secret.write_text("private key", encoding="utf-8")
+    papers = s.memory_dir / "papers"
+    papers.mkdir()
+    try:
+        (papers / "link.md").symlink_to(secret)
+    except OSError:
+        pytest.skip("创建 symlink 需要 Windows 开发者模式")
+    assert memory.search_memory("private", settings=s) == []

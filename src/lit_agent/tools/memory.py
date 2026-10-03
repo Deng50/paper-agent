@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Literal
+from typing import Literal, get_args
 
 import structlog
 
@@ -98,6 +98,8 @@ def list_dir(path: str | Path, *, settings: Settings | None = None) -> list[str]
 
 
 def _scope_dirs(memory_dir: Path, scope: Scope) -> list[Path]:
+    if scope not in get_args(Scope):
+        raise PathNotAllowed(f"无效检索 scope：{scope}")
     if scope == "all":
         return [memory_dir / s for s in ("papers", "sessions", "profile", "feedback")]
     return [memory_dir / scope]
@@ -115,18 +117,27 @@ def search_memory(
     返回命中列表：[{path, snippet}]，按文件路径倒序（新日期目录在前）。
     """
     settings = settings or get_settings()
+    scope_dirs = _scope_dirs(settings.memory_dir, scope)
+    if limit < 1:
+        return []
     terms = [t for t in query.lower().split() if t]
     hits: list[dict[str, str]] = []
     if not terms:
         return hits
 
     files: list[Path] = []
-    for d in _scope_dirs(settings.memory_dir, scope):
+    for d in scope_dirs:
         if d.is_dir():
             files.extend(d.rglob("*.md"))
+            if d.name == "feedback":
+                files.extend(d.rglob("*.log"))
     # 路径倒序 ≈ 日期新→旧（目录名是 YYYY-MM-DD）
     for md in sorted(files, reverse=True):
-        text = md.read_text(encoding="utf-8", errors="replace")
+        try:
+            resolved = _resolve(md, [settings.memory_dir.resolve()])
+            text = resolved.read_text(encoding="utf-8", errors="replace")
+        except (PathNotAllowed, OSError):
+            continue
         low = text.lower()
         if all(t in low for t in terms):
             hits.append({"path": str(md), "snippet": _snippet(text, terms)})
