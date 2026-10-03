@@ -63,3 +63,7 @@ HAL、Zenodo、SSRN 原先将作者作为字符串、日期作为字符串传给
 ## P6 · OAI-PMH XML 叶节点解析（2026-10）
 
 OAIPMHSearcher 原先用 `element or fallback` / `if element` 判断 XML 节点存在性，叶节点被误判为空，丢失标题、日期、描述、语言等字段。改为显式 `is not None`，正确读取 metadata 下的 DC 包装节点，并允许精确 paper_id 匹配以支持下载时定位。tests/test_vendor_oai_metadata.py 使用本地 XML 验证，不声明 BASE 远程端点可用。
+
+## P7 · CiteSeerX 下载缺失导入（2026-10）
+
+补齐 download_pdf 使用的 os 导入。tests/test_vendor_citeseerx_download.py 以 mock HTTP 响应验证目录创建和完整字节写入；不代表已验证上游服务或 PDF 内容解析。

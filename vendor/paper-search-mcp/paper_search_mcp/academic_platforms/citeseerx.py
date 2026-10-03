@@ -3,6 +3,7 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime
 import requests
 import logging
+import os  # PATCH(lit-agent): download_pdf uses makedirs/path.join.
 import json
 import xml.etree.ElementTree as ET
 from urllib.parse import quote, urlencode
