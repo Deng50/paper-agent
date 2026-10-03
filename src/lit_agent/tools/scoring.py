@@ -83,10 +83,14 @@ async def _score_batch(
         messages=[{"role": "user", "content": user}],
     )
     for block in resp.content:
-        if getattr(block, "type", None) == "tool_use":
+        if getattr(block, "type", None) == "tool_use" and block.name == "submit_scores":
             batch = ScoreBatch.model_validate(block.input)
+            expected = {p.paper_id for p in papers}
+            actual = [s.paper_id for s in batch.scores]
+            if set(actual) != expected or len(actual) != len(expected):
+                raise ValueError("评分必须覆盖当前批次的所有 paper_id，且不得重复或添加未知 ID")
             return {s.paper_id: (s.score, s.reason) for s in batch.scores}
-    return {}
+    raise ValueError("模型未返回 submit_scores 工具结果")
 
 
 async def score_papers(
@@ -101,15 +105,18 @@ async def score_papers(
         timeout=60.0,
     )
     by_id = {p.paper_id: p for p in papers}
-    for start, end in _split(len(papers)):
-        chunk = papers[start:end]
-        try:
-            scores = await _score_batch(client, chunk, profile_summary)
-        except Exception as exc:  # 评分批失败不该整体崩，记日志跳过该批
-            _log.warning("score_batch_failed", size=len(chunk), error=str(exc))
-            continue
-        for pid, (score, reason) in scores.items():
-            if pid in by_id:
+    async with client:
+        for start, end in _split(len(papers)):
+            chunk = papers[start:end]
+            for attempt in range(3):
+                try:
+                    scores = await _score_batch(client, chunk, profile_summary)
+                    break
+                except ValueError as exc:
+                    _log.warning("score_validation_failed", attempt=attempt + 1, error=str(exc))
+                    if attempt == 2:
+                        raise
+            for pid, (score, reason) in scores.items():
                 by_id[pid].score = score
                 by_id[pid].reason = reason
     scored = sum(1 for p in papers if p.score is not None)
