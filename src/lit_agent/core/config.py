@@ -9,6 +9,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import AliasChoices, Field, PostgresDsn, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -71,6 +72,15 @@ class Settings(BaseSettings):
     smtp_from: str = ""
     smtp_to: str = ""
 
+    @field_validator("timezone")
+    @classmethod
+    def _valid_timezone(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except (ValueError, ZoneInfoNotFoundError) as exc:
+            raise ValueError("TIMEZONE 必须为有效的 IANA 时区，如 Asia/Shanghai") from exc
+        return value
+
     @field_validator("database_url")
     @classmethod
     def _require_psycopg_driver(cls, v: PostgresDsn) -> PostgresDsn:
@@ -88,7 +98,7 @@ class Settings(BaseSettings):
     @property
     def database_url_str(self) -> str:
         """SQLAlchemy / psycopg 用的字符串形式（含 +psycopg 驱动）。"""
-        return str(self.database_url)
+        return str(self.database_url).replace("postgresql://", "postgresql+psycopg://", 1)
 
     @property
     def psycopg_dsn(self) -> str:

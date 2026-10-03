@@ -76,3 +76,19 @@ def test_config_rejects_non_psycopg_scheme(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setenv("DATABASE_URL", "mysql://u:p@localhost/db")
     with pytest.raises(ValidationError):
         Settings(_env_file=None)  # type: ignore[call-arg]
+
+
+def test_plain_postgres_url_uses_installed_psycopg_driver(monkeypatch: pytest.MonkeyPatch) -> None:
+    from lit_agent.core.config import Settings
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@localhost/db")
+    settings = Settings(_env_file=None)  # type: ignore[call-arg]
+    assert settings.database_url_str == "postgresql+psycopg://u:p@localhost/db"
+    assert settings.psycopg_dsn == "postgresql://u:p@localhost/db"
+
+
+def test_invalid_timezone_fails_during_configuration() -> None:
+    from lit_agent.core.config import Settings
+
+    with pytest.raises(ValidationError, match="IANA"):
+        Settings(timezone="invalid-zone")  # type: ignore[call-arg]
