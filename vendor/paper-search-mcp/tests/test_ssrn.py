@@ -26,7 +26,7 @@ class TestSSRNSearcher(unittest.TestCase):
         self.assertEqual(paper.source, "ssrn")
         self.assertEqual(paper.title, "SSRN Parser Test")
         self.assertTrue(paper.paper_id.startswith("ssrn:"))
-        self.assertIn("Alice", paper.authors)
+        self.assertIn("Alice Example", paper.authors)
         self.assertIn("sample abstract", paper.abstract)
 
     def test_parse_results_legacy_layout(self):
@@ -44,7 +44,7 @@ class TestSSRNSearcher(unittest.TestCase):
         papers = self.searcher._parse_results(html)
         self.assertEqual(len(papers), 1)
         self.assertEqual(papers[0].title, "Legacy SSRN Item")
-        self.assertIn("Carol", papers[0].authors)
+        self.assertIn("Carol Example", papers[0].authors)
 
     def test_parse_results_invalid_html(self):
         papers = self.searcher._parse_results("<html><body><p>no results here</p></body></html>")

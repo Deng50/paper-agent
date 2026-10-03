@@ -17,6 +17,7 @@ import requests
 
 from .base import PaperSource
 from ..paper import Paper
+from ..utils import parse_publication_date  # PATCH(lit-agent)
 
 logger = logging.getLogger(__name__)
 
@@ -224,9 +225,9 @@ class HALSearcher(PaperSource):
 
             authors_field = doc.get("authFullName_s", [])
             if isinstance(authors_field, list):
-                authors = ", ".join(authors_field)
+                authors = [str(author) for author in authors_field if author]
             else:
-                authors = str(authors_field)
+                authors = [str(authors_field)] if authors_field else []
 
             abstract_field = doc.get("abstract_s", [])
             if isinstance(abstract_field, list):
@@ -252,7 +253,7 @@ class HALSearcher(PaperSource):
                 authors=authors,
                 abstract=abstract.strip(),
                 doi=doi,
-                published_date=str(pub_date),
+                published_date=parse_publication_date(pub_date),
                 pdf_url=pdf_url,
                 url=record_url,
                 source="hal",

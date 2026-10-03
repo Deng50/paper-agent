@@ -55,3 +55,7 @@
 ## P4 · 区分搜索失败和零匹配（2026-10）
 
 四个已接入源的 search() 保持 list 返回契约，同时在请求失败时设置实例 last_error，成功请求则为 None。sources.py 读取此字段：单源失败仍隔离，全部请求失败向上抛错，避免全源离线被记为成功的零篇推送。实例 HTTP session 在调用结束时关闭。测试使用 mock 请求，不访问外部服务。
+
+## P5 · 可选连接器元数据契约（2026-10）
+
+HAL、Zenodo、SSRN 原先将作者作为字符串、日期作为字符串传给 Paper，导致作者逐字符连接、非空日期序列化崩溃。现保留作者列表，日期转为 datetime / None；SSRN 修正 abstract_id URL 提取并使用稳定的 SHA-256 兜底 ID。由主项目 tests/test_vendor_optional_metadata.py 离线验证。这些连接器仍未接入主应用的四源检索流程。

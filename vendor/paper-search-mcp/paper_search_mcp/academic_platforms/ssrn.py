@@ -21,6 +21,7 @@ import logging
 import re
 import time
 import os
+import hashlib
 from typing import List, Optional, Any, Tuple
 from urllib.parse import urljoin
 
@@ -29,6 +30,7 @@ from bs4 import BeautifulSoup
 
 from .base import PaperSource
 from ..paper import Paper
+from ..utils import parse_publication_date  # PATCH(lit-agent)
 
 logger = logging.getLogger(__name__)
 
@@ -325,7 +327,7 @@ class SSRNSearcher(PaperSource):
 
             # SSRN abstract ID — extract from URL like /abstract=1234567
             paper_id = ""
-            m = re.search(r"abstract[=_](\d+)", raw_url)
+            m = re.search(r"abstract(?:_id)?[=_](\d+)", raw_url)
             if m:
                 paper_id = f"ssrn:{m.group(1)}"
 
@@ -335,7 +337,8 @@ class SSRNSearcher(PaperSource):
                 or block.select_one("span.author-name")
                 or block.select_one(".srp-authors")
             )
-            authors = authors_tag.get_text(separator=", ", strip=True) if authors_tag else ""
+            authors_text = authors_tag.get_text(separator=", ", strip=True) if authors_tag else ""
+            authors = [author.strip() for author in authors_text.split(",") if author.strip()]
 
             # Abstract
             abstract_tag = (
@@ -350,12 +353,12 @@ class SSRNSearcher(PaperSource):
             pub_date = date_tag.get_text(strip=True) if date_tag else ""
 
             return Paper(
-                paper_id=paper_id or f"ssrn:{hash(raw_url)}",
+                paper_id=paper_id or f"ssrn:{hashlib.sha256(raw_url.encode()).hexdigest()[:16]}",
                 title=title,
                 authors=authors,
                 abstract=abstract,
                 doi="",
-                published_date=pub_date,
+                published_date=parse_publication_date(pub_date),
                 pdf_url="",  # not available without login
                 url=raw_url,
                 source="ssrn",

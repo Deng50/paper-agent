@@ -16,6 +16,7 @@ import requests
 
 from .base import PaperSource
 from ..paper import Paper
+from ..utils import parse_publication_date  # PATCH(lit-agent)
 from ..config import get_env
 
 logger = logging.getLogger(__name__)
@@ -232,7 +233,7 @@ class ZenodoSearcher(PaperSource):
                 return None
 
             creators = meta.get("creators", [])
-            authors = ", ".join(
+            authors = list(
                 c.get("name", "")
                 or f"{c.get('given_name', '')} {c.get('family_name', '')}".strip()
                 for c in creators
@@ -266,7 +267,7 @@ class ZenodoSearcher(PaperSource):
                 authors=authors,
                 abstract=abstract,
                 doi=doi,
-                published_date=pub_date,
+                published_date=parse_publication_date(pub_date),
                 pdf_url=pdf_url,
                 url=record_url,
                 source="zenodo",
