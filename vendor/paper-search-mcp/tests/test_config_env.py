@@ -1,5 +1,6 @@
 import os
 import tempfile
+from pathlib import Path
 import unittest
 from unittest.mock import patch
 
@@ -43,14 +44,15 @@ class TestConfigEnv(unittest.TestCase):
             self.assertEqual(config.get_env("CORE_API_KEY", "default"), "")
 
     def test_loads_from_custom_env_file(self):
-        with tempfile.NamedTemporaryFile("w", suffix=".env", delete=True) as tmp:
-            tmp.write("PAPER_SEARCH_MCP_UNPAYWALL_EMAIL=test@example.com\n")
-            tmp.flush()
+        # PATCH(lit-agent): Windows cannot reopen an open delete-on-close file.
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            env_path = Path(tmp_dir) / "test.env"
+            env_path.write_text("PAPER_SEARCH_MCP_UNPAYWALL_EMAIL=test@example.com\n", encoding="utf-8")
 
             with patch.dict(
                 os.environ,
                 {
-                    "PAPER_SEARCH_MCP_ENV_FILE": tmp.name,
+                    "PAPER_SEARCH_MCP_ENV_FILE": str(env_path),
                 },
                 clear=True,
             ):

@@ -5,7 +5,9 @@ import pytest
 from paper_search_mcp.academic_platforms.citeseerx import CiteSeerXSearcher
 
 
-def test_citeseerx_download_writes_response(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_citeseerx_download_writes_response(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     searcher = CiteSeerXSearcher()
     monkeypatch.setattr(
         searcher,

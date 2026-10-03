@@ -67,3 +67,7 @@ OAIPMHSearcher 原先用 `element or fallback` / `if element` 判断 XML 节点�
 ## P7 · CiteSeerX 下载缺失导入（2026-10）
 
 补齐 download_pdf 使用的 os 导入。tests/test_vendor_citeseerx_download.py 以 mock HTTP 响应验证目录创建和完整字节写入；不代表已验证上游服务或 PDF 内容解析。
+
+## P8 · Windows 环境配置测试（2026-10）
+
+上游 test_config_env 使用保持打开状态的 delete-on-close 临时文件，Windows 下第二次打开被拒绝。改用 TemporaryDirectory 中已关闭的 UTF-8 文件，避免平台相关的假失败。
