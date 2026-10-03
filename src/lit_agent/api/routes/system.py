@@ -93,7 +93,9 @@ async def _check_anthropic(api_key: str, base_url: str = "") -> Check:
         from anthropic import AsyncAnthropic
 
         # base_url 留空走官方；填了走中转网关（注意填根域名，SDK 自拼 /v1/messages）。
-        client = AsyncAnthropic(api_key=api_key, base_url=base_url or None, timeout=15.0)
+        client = AsyncAnthropic(
+            api_key=api_key, base_url=base_url or None, timeout=15.0, max_retries=0
+        )
         try:
             # 首选廉价探针：列模型，验连通 + 鉴权，不烧 token。
             await client.models.list(limit=1)
@@ -113,6 +115,8 @@ async def _check_anthropic(api_key: str, base_url: str = "") -> Check:
                 latency_ms=_ms(t0),
                 detail=f"messages probe ok (models.list unsupported by gateway: {list_exc})",
             )
+        finally:
+            await client.close()
     except Exception as exc:
         return Check(ok=False, latency_ms=_ms(t0), detail=str(exc))
 
