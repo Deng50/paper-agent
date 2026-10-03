@@ -6,9 +6,8 @@
     uv run python -m scripts.rebuild_session_md --thread-id <uuid> --force
 
 owner 拍板 Q9：放 scripts/（CLI 惯例），不放 tools/（不是 agent @tool）。
-默认无 --force 时若 md 已存在则 abort，要求 owner 先 rm 旧 md 再跑；
-故障恢复场景 = 「删损坏 session md → 重建一致」（docs/05 §5 验收第 6 条字面），
-通常 owner 已手动 rm，--force 仅在调试 / 覆盖正常 md 时用作护栏。
+默认无 --force 时若 md 已存在则 abort；--force 从 checkpoint 原子重建正文，
+保留手工标题、原路径和开始时间，写入失败时原文件仍然可用。
 
 --all 批量模式 M4 不实现：单用户故障恢复硬指标 = 单 thread 一致即可，批量
 扫 PG distinct thread_id 留 M6 backup 运维脚本范畴。
@@ -34,7 +33,7 @@ async def rebuild_one(thread_id: str, dry_run: bool = False, force: bool = False
     existing = find_existing_by_thread(thread_id, settings)
     if existing is not None and not force:
         print(f"[abort] session md 已存在：{existing}")
-        print("       加 --force 显式覆盖；或先 rm 旧 md 后再跑。")
+        print("       加 --force 显式原子覆盖。")
         return 1
 
     async with AsyncPostgresSaver.from_conn_string(settings.psycopg_dsn) as saver:
@@ -54,13 +53,9 @@ async def rebuild_one(thread_id: str, dry_run: bool = False, force: bool = False
         print("[dry-run] 不写。")
         return 0
 
-    if existing is not None:
-        existing.unlink()
-        print(f"[clean] 旧 md 已删：{existing}")
-
     path = derive_session_md(thread_id, messages, settings=settings, now=dt.datetime.now(dt.UTC))
     if path is None:
-        print("[warn] derive_session_md 返回 None（messages 全在 prev_count 之前？）")
+        print("[warn] derive_session_md 未生成可用归档。")
         return 1
     print(f"[done] session md 重建完成：{path}")
     return 0
@@ -74,7 +69,7 @@ def main() -> int:
         help="LangGraph thread_id（UUID 或 daily_push:YYYY-MM-DD）",
     )
     parser.add_argument("--dry-run", action="store_true", help="只列计划不写")
-    parser.add_argument("--force", action="store_true", help="覆盖已有 md（先 unlink 再重建）")
+    parser.add_argument("--force", action="store_true", help="原子覆盖已有 md，保留标题和开始时间")
     args = parser.parse_args()
     return asyncio.run(rebuild_one(args.thread_id, args.dry_run, args.force))
 

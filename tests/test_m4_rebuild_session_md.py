@@ -129,7 +129,7 @@ def test_rebuild_force_overwrites(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """已有 md + --force → 旧 md unlink，重建写新文件，返回 0。"""
+    """已有 md + --force → 在原路径原子重建，返回 0。"""
     from scripts.rebuild_session_md import rebuild_one
 
     from lit_agent.core.config import get_settings
@@ -148,9 +148,30 @@ def test_rebuild_force_overwrites(
     rc = asyncio.run(rebuild_one("force-uuid", force=True))
     assert rc == 0
     captured = capsys.readouterr().out
-    assert "[clean] 旧 md 已删" in captured
     assert "[done]" in captured
-    # 新 md 应当存在（路径可能与旧 md 不同——新算的 started_at）
     new_mds = list((tmp_path / "sessions").rglob("*.md"))
-    assert len(new_mds) >= 1
+    assert new_mds == [fake_md]
     assert all("new" in m.read_text(encoding="utf-8") for m in new_mds)
+
+
+def test_rebuild_force_preserves_archive_on_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from scripts import rebuild_session_md as mod
+
+    from lit_agent.core.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "memory_dir", tmp_path)
+    archive = tmp_path / "sessions" / "2026-05-25" / "13-00-chat.md"
+    archive.parent.mkdir(parents=True)
+    original = "---\nthread_id: recover-me\ntitle: My research\n---\nold body\n"
+    archive.write_text(original, encoding="utf-8")
+    _patch_common(monkeypatch, [HumanMessage(content="new question")])
+
+    def fail(*args: Any, **kwargs: Any) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(mod, "derive_session_md", fail)
+    with pytest.raises(OSError, match="disk full"):
+        asyncio.run(mod.rebuild_one("recover-me", force=True))
+    assert archive.read_text(encoding="utf-8") == original
